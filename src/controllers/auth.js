@@ -93,17 +93,20 @@ module.exports = {
   login: async (req, res) => {
     try {
       const { email, password } = req.body || {};
+      console.log('Login attempt for:', email);
 
       if (!email || !password) {
         return misc.response(res, 400, true, 'email dan password wajib diisi');
       }
 
       const user = await find_user_by_email(email);
+      console.log('User found in DB:', user ? 'YES' : 'NO');
       if (!user) {
         return misc.response(res, 401, true, 'Email atau password salah');
       }
 
       const match = await bcrypt.compare(password, user.password_hash);
+      console.log('Password match:', match); // DEBUG 3
       if (!match) {
         return misc.response(res, 401, true, 'Email atau password salah');
       }
