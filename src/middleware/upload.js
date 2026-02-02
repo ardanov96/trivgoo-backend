@@ -20,10 +20,14 @@ const storage = multer.diskStorage({
   },
 });
 
-function fileFilter(_, file, cb) {
-  if (!file.mimetype.startsWith("image/"))
-    return cb(new Error("Only images allowed"));
-  cb(null, true);
+function fileFilter(req, file, cb) {
+  const allowedGeneral = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+  
+  if (allowedGeneral.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error("File type not supported"), false);
+  }
 }
 
 const upload = multer({
