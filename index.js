@@ -16,6 +16,7 @@ const compression = require('compression');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
+const settingsRoutes = require('./src/routes/settings');
 
 const routerNav = require('./src/index');
 
@@ -37,7 +38,12 @@ const envOrigins = (process.env.CORS_ORIGINS || '')
   .filter(Boolean);
 
 const allowedOrigins = new Set(
-  envOrigins.length ? envOrigins : ['http://localhost:3000', 'http://127.0.0.1:3000'],
+  envOrigins.length ? envOrigins : [
+    'http://localhost:3000', 
+    'http://127.0.0.1:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:5173'
+  ],
 );
 
 if (IS_PROD && !process.env.SESSION_SECRET) {
@@ -182,14 +188,17 @@ async function initSessionStore() {
   sessionStore = new RedisStoreCtor({ client: redisClient, prefix: 'sess:' });
 }
 
-function buildSessionOptions() {
+function buildSessionOptions(dynamicTimeoutMins) {
   // kalau FE & BE beda domain dan butuh cookie cross-site:
   // sameSite: 'none' + secure: true (HTTPS)
+
+  const timeoutMs = (dynamicTimeoutMins || 30) * 60 * 1000;
+
   const cookie = {
     httpOnly: true,
     sameSite: process.env.COOKIE_SAMESITE || 'lax',
     secure: IS_PROD, // true jika HTTPS
-    maxAge: Number(process.env.SESSION_MAX_AGE_MS || 1000 * 60 * 60 * 24 * 7),
+    maxAge: timeoutMs,
   };
 
   return {
@@ -197,7 +206,7 @@ function buildSessionOptions() {
     secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
     resave: false,
     saveUninitialized: false,
-    rolling: false,
+    rolling: true,
     store: sessionStore,
     cookie,
   };
@@ -238,9 +247,24 @@ function errorHandler(err, _req, res, _next) {
 // --------------------
 async function start() {
   // await initSessionStore();
+  const db = require('./src/configs/db');
+
+  let dbSettings = {};
+  try {
+    console.log("[INIT] Fetching system settings from DB...");
+    const [rows] = await db.execute('SELECT session_timeout FROM settings WHERE id = 1');
+    if (rows.length > 0) {
+      dbSettings = rows[0];
+      console.log(`[INIT] Session timeout set to ${dbSettings.session_timeout} minutes from DB.`);
+    }
+  } catch (err) {
+    console.error("[ERROR] Failed to fetch settings on startup, using defaults:", err.message);
+  }
 
   // ✅ session harus dipasang sebelum routes
-  app.use(session(buildSessionOptions()));
+  app.use(session(buildSessionOptions(dbSettings.session_timeout)));
+
+  app.use('/api', settingsRoutes);
 
   // ✅ routes
   app.use('/', routerNav);
