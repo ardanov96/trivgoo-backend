@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../configs/db'); // Sesuaikan path ini ke file koneksi database kamu
+const db = require('../configs/db'); 
 
 // Ambil data settings
 router.get('/settings', async (req, res) => {
@@ -30,7 +30,7 @@ router.post('/settings', async (req, res) => {
             require_2fa = ?, session_timeout = ? WHERE id = 1`,
             [
                 siteName, supportEmail, 
-                maintenanceMode ? 1 : 0, // MySQL biasanya pakai 1/0 untuk boolean
+                maintenanceMode ? 1 : 0, 
                 commissionRate, currency, payoutSchedule, 
                 require2FA ? 1 : 0, 
                 sessionTimeout

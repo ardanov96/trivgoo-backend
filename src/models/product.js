@@ -19,6 +19,24 @@ function safe_parse_json(value, fallback) {
   }
 }
 
+async function list_all_products() {
+  const rows = await query(`
+    SELECT p.*, u.name AS owner_name 
+    FROM products p 
+    JOIN users u ON u.id = p.owner_id
+    WHERE p.is_active = 1
+    ORDER BY p.created_at DESC
+  `);
+  
+  return rows.map(row => ({
+    ...row,
+    price: Number(row.price),
+    // GANTI safeJsonParse MENJADI safe_parse_json
+    features: safe_parse_json(row.features, []), 
+    details: safe_parse_json(row.details, {})
+  }));
+}
+
 async function find_product_row_by_id(product_id) {
   const rows = await query(
     `
@@ -755,4 +773,5 @@ module.exports = {
   update_product_image_for_owner,
   delete_product_image_for_owner,
   reorder_product_images_for_owner,
+  list_all_products,
 };
