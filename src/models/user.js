@@ -1,4 +1,5 @@
 const db = require("../configs/db");
+const knex = require('../configs/db');
 
 function to_int(v) {
   const n = Number(v);
@@ -104,4 +105,9 @@ module.exports = {
   find_user_by_id,
   create_user,
   update_verification_status,
+
+  update_user: async (id, data) => {
+    await knex('users').where({ id }).update(data);
+    return knex('users').where({ id }).first();
+  },
 };

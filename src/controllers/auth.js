@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const misc = require('../helpers/response');
 
-const { find_user_by_email, create_user, find_user_by_id } = require('../models/user');
+const { find_user_by_email, create_user, find_user_by_id, update_user } = require('../models/user');
 
 const { create_default_profile } = require('../models/profile');
 
@@ -176,6 +176,48 @@ module.exports = {
 
         res.clearCookie('sid');
         return misc.response(res, 200, false, 'Logged out');
+      });
+    } catch (e) {
+      console.error(e);
+      return misc.response(res, 500, true, e.message || 'Internal server error');
+    }
+  },
+
+  update_profile: async (req, res) => {
+    try {
+      const user_id = req.session?.user?.id || req.user?.id;
+      if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
+
+      const { name, email } = req.body;
+      const updateData = {};
+
+      if (name) updateData.name = name;
+      if (email) updateData.email = email;
+
+      // req.file berasal dari middleware upload.single()
+      if (req.file) {
+        // Kita simpan path relatif atau hanya nama filenya saja
+        updateData.profile_photo = req.file.filename;
+      }
+
+      // Jalankan update di DB
+      const updatedUser = await update_user(user_id, updateData);
+
+      // PENTING: Update data di session agar saat reload/refresh data tetap terbaru
+      req.session.user = {
+        ...req.session.user,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        // Optional: Jika ingin session menyimpan info foto
+        profile_photo: updatedUser.profile_photo 
+      };
+
+      req.session.save((err) => {
+        if (err) return misc.response(res, 500, true, 'Failed to update session');
+        
+        return misc.response(res, 200, false, 'Profile updated successfully', {
+          user: to_safe_user(updatedUser),
+        });
       });
     } catch (e) {
       console.error(e);
