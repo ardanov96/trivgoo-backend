@@ -554,6 +554,14 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
   };
 }
 
+async function get_product_by_id(product_id) {
+  const row = await find_product_row_by_id(product_id);
+  if (!row) return null;
+  
+  // Memanfaatkan fungsi build_product_response yang sudah Anda miliki di model
+  return await build_product_response(row);
+}
+
 async function list_product_images_for_owner(product_id, owner_id) {
   await ensure_owned_product(product_id, owner_id);
 
@@ -774,4 +782,5 @@ module.exports = {
   delete_product_image_for_owner,
   reorder_product_images_for_owner,
   list_all_products,
+  get_product_by_id
 };
