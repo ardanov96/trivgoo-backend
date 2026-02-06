@@ -39,7 +39,8 @@ const envOrigins = (process.env.CORS_ORIGINS || '')
 
 const allowedOrigins = new Set(
   envOrigins.length ? envOrigins : [
-    'http://localhost:3000', 
+    'http://localhost:3000',
+    'http://192.168.1.99:3000', 
     'http://127.0.0.1:3000',
     'http://localhost:5173',
     'http://127.0.0.1:5173'
@@ -208,7 +209,14 @@ function buildSessionOptions(dynamicTimeoutMins) {
     saveUninitialized: false,
     rolling: true,
     store: sessionStore,
-    cookie,
+    cookie: {
+      httpOnly: true,
+      // Saat pakai IP (bukan HTTPS), sameSite harus 'lax'
+      // Jangan gunakan 'none' kecuali kamu pakai HTTPS
+      sameSite: 'lax', 
+      secure: false, // Harus false karena kamu tidak pakai HTTPS (http://192.168.1.99)
+      maxAge: timeoutMs,
+    },
   };
 }
 
@@ -273,8 +281,12 @@ async function start() {
 
   app.use(errorHandler);
 
-  const server = app.listen(PORT, () => {
-    console.log(`\n\t*** Server listening on PORT ${PORT} (${NODE_ENV}) ***`);
+  // const server = app.listen(PORT, () => {
+  //   console.log(`\n\t*** Server listening on PORT ${PORT} (${NODE_ENV}) ***`);
+  // });
+
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n\t*** Server listening on http://192.168.1.99:${PORT} (${NODE_ENV}) ***`);
   });
 
   // optional: timeouts untuk request lama agar lebih terkontrol
