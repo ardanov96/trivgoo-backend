@@ -40,7 +40,7 @@ const envOrigins = (process.env.CORS_ORIGINS || '')
 const allowedOrigins = new Set(
   envOrigins.length ? envOrigins : [
     'http://localhost:3000',
-    'http://192.168.1.99:3000', 
+    'http://192.168.1.101:3000', 
     'http://127.0.0.1:3000',
     'http://localhost:5173',
     'http://127.0.0.1:5173'
@@ -286,7 +286,7 @@ async function start() {
   // });
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n\t*** Server listening on http://192.168.1.99:${PORT} (${NODE_ENV}) ***`);
+    console.log(`\n\t*** Server listening on http://192.168.1.101:${PORT} (${NODE_ENV}) ***`);
   });
 
   // optional: timeouts untuk request lama agar lebih terkontrol
