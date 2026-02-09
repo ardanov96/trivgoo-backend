@@ -112,6 +112,9 @@ async function build_product_response(row) {
   const images = await find_product_images(row.id);
   const blocked_dates = await find_product_blocked_dates(row.id);
 
+  const features = safeJsonParse(row.features, []);
+  const details = safeJsonParse(row.details, {});
+
   return {
     id: row.id,
     owner_id: row.owner_id,

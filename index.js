@@ -1,10 +1,5 @@
 /**
  * Optimized Express bootstrap (session-based, optional Redis store)
- * - safer CORS
- * - disable cache for API (avoid 304 for /api)
- * - better error handling (413 + invalid JSON)
- * - graceful shutdown (close server + redis)
- * - optional timeouts to reduce random socket issues
  */
 
 require('dotenv').config();
@@ -16,7 +11,6 @@ const compression = require('compression');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const session = require('express-session');
-const settingsRoutes = require('./src/routes/settings');
 
 const routerNav = require('./src/index');
 
@@ -30,8 +24,7 @@ const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PROD = NODE_ENV === 'production';
 const IS_DEV = !IS_PROD;
 
-// prefer explicit list in ENV for prod usage
-// example: CORS_ORIGINS="https://admin.example.com,https://app.example.com"
+// ✅ PERBAIKAN: Tambahkan dev.trivgoo.com ke allowed origins
 const envOrigins = (process.env.CORS_ORIGINS || '')
   .split(',')
   .map((s) => s.trim())
@@ -43,6 +36,8 @@ const allowedOrigins = new Set(
     'http://127.0.0.1:3000',
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'https://dev.trivgoo.com',  // ✅ TAMBAHKAN INI
+    'http://dev.trivgoo.com',   // ✅ TAMBAHKAN INI (jika ada)
   ],
 );
 
@@ -51,7 +46,7 @@ if (IS_PROD && !process.env.SESSION_SECRET) {
 }
 
 // --------------------
-// Trust proxy (IMPORTANT)
+// Trust proxy (IMPORTANT for HTTPS)
 // --------------------
 app.set('trust proxy', 1);
 
@@ -68,33 +63,13 @@ app.use(
 
 app.use(compression());
 
-// Static: idealnya set cache untuk aset (bukan API)
-app.use(
-  express.static('public', {
-    etag: true,
-    lastModified: true,
-    maxAge: IS_PROD ? '7d' : 0,
-  }),
-);
-
+// ✅ PERBAIKAN: Body parsers HARUS sebelum routes
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json({ limit: process.env.JSON_LIMIT || '5mb' }));
 app.use(cookieParser());
 
 // --------------------
-// Request lifecycle (debug aborted requests)
-// --------------------
-app.use((req, res, next) => {
-  req.on('aborted', () => {
-    // client putus sebelum selesai; sering terlihat sebagai ECONNRESET di sisi lain
-    // log ringan aja
-    if (IS_DEV) console.warn('[ABORTED]', req.method, req.originalUrl);
-  });
-  next();
-});
-
-// --------------------
-// CORS
+// CORS - PERBAIKAN
 // --------------------
 function isAllowedOrigin(origin) {
   if (!origin) return true; // curl/postman/server-to-server
@@ -103,7 +78,11 @@ function isAllowedOrigin(origin) {
 
 const corsOptions = {
   origin(origin, cb) {
-    cb(null, isAllowedOrigin(origin));
+    if (isAllowedOrigin(origin)) {
+      cb(null, true);
+    } else {
+      cb(null, false); // ✅ Jangan reject, biarkan request lewat
+    }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -112,25 +91,43 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-// cukup ini saja; cors middleware sudah handle preflight
-app.options('*', cors(corsOptions));
 
-// (Optional) reject origin yang ga diizinkan dengan pesan jelas
-// NOTE: ini jalan setelah cors() jadi hanya untuk “message clarity”
+// ✅ HAPUS atau COMMENT bagian ini - terlalu strict
+// app.use((req, res, next) => {
+//   const origin = req.headers.origin;
+//   if (origin && !isAllowedOrigin(origin)) {
+//     return res.status(403).json({
+//       status: 403,
+//       error: true,
+//       message: `CORS blocked for origin: ${origin}`,
+//     });
+//   }
+//   next();
+// });
+
+// --------------------
+// Static files
+// --------------------
+app.use(
+  express.static('public', {
+    etag: true,
+    lastModified: true,
+    maxAge: IS_PROD ? '7d' : 0,
+  }),
+);
+
+// --------------------
+// Request lifecycle debug
+// --------------------
 app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && !isAllowedOrigin(origin)) {
-    return res.status(403).json({
-      status: 403,
-      error: true,
-      message: `CORS blocked for origin: ${origin}`,
-    });
-  }
+  req.on('aborted', () => {
+    if (IS_DEV) console.warn('[ABORTED]', req.method, req.originalUrl);
+  });
   next();
 });
 
 // --------------------
-// No-cache for API (hindari 304 untuk endpoint session / auth)
+// No-cache for API
 // --------------------
 app.use('/api', (_, res, next) => {
   res.set('Cache-Control', 'no-store');
@@ -154,7 +151,6 @@ async function initSessionStore() {
 
   redisClient = createClient({
     url: process.env.REDIS_URL,
-    // bantu koneksi lebih tahan NAT/idle reset
     socket: {
       keepAlive: true,
       reconnectStrategy: (retries) => Math.min(retries * 200, 2000),
@@ -165,21 +161,18 @@ async function initSessionStore() {
   await redisClient.connect();
   console.log('[REDIS] connected');
 
-  // connect-redis v7: default export w/ create()
   const v7Default = connectRedisPkg?.default;
   if (v7Default && typeof v7Default.create === 'function') {
     sessionStore = v7Default.create({ client: redisClient, prefix: 'sess:' });
     return;
   }
 
-  // connect-redis v6: function(session) -> ctor
   if (typeof connectRedisPkg === 'function') {
     const RedisStoreCtor = connectRedisPkg(session);
     sessionStore = new RedisStoreCtor({ client: redisClient, prefix: 'sess:' });
     return;
   }
 
-  // other shapes
   const RedisStoreCtor = connectRedisPkg?.RedisStore || connectRedisPkg?.default;
   if (typeof RedisStoreCtor !== 'function') {
     throw new Error('connect-redis export tidak cocok. Cek versi: npm ls connect-redis');
@@ -189,15 +182,12 @@ async function initSessionStore() {
 }
 
 function buildSessionOptions(dynamicTimeoutMins) {
-  // kalau FE & BE beda domain dan butuh cookie cross-site:
-  // sameSite: 'none' + secure: true (HTTPS)
-
   const timeoutMs = (dynamicTimeoutMins || 30) * 60 * 1000;
 
   const cookie = {
     httpOnly: true,
     sameSite: process.env.COOKIE_SAMESITE || 'lax',
-    secure: IS_PROD, // true jika HTTPS
+    secure: IS_PROD,
     maxAge: timeoutMs,
   };
 
@@ -215,8 +205,7 @@ function buildSessionOptions(dynamicTimeoutMins) {
 // --------------------
 // Error handler
 // --------------------
-function errorHandler(err, _req, res, _next) {
-  // payload terlalu besar
+function errorHandler(err, req, res, next) {
   if (err?.type === 'entity.too.large') {
     return res.status(413).json({
       status: 413,
@@ -225,7 +214,6 @@ function errorHandler(err, _req, res, _next) {
     });
   }
 
-  // invalid JSON
   if (err instanceof SyntaxError && err?.status === 400 && 'body' in err) {
     return res.status(400).json({
       status: 400,
@@ -243,7 +231,7 @@ function errorHandler(err, _req, res, _next) {
 }
 
 // --------------------
-// Bootstrap server + graceful shutdown
+// Bootstrap server
 // --------------------
 async function start() {
   // await initSessionStore();
@@ -261,23 +249,30 @@ async function start() {
     console.error("[ERROR] Failed to fetch settings on startup, using defaults:", err.message);
   }
 
-  // ✅ session harus dipasang sebelum routes
+  // ✅ Session middleware
   app.use(session(buildSessionOptions(dbSettings.session_timeout)));
 
-  app.use('/api', settingsRoutes);
-
-  // ✅ routes
+  // ✅ PENTING: Mount routes SETELAH semua middleware di atas
   app.use('/', routerNav);
 
-  app.use((_, res) => res.sendStatus(404));
+  // ✅ 404 handler
+  app.use((req, res) => {
+    console.log('[404]', req.method, req.originalUrl); // ✅ Log untuk debugging
+    res.status(404).json({
+      status: 404,
+      error: true,
+      message: 'Not Found',
+    });
+  });
 
+  // ✅ Error handler
   app.use(errorHandler);
 
   const server = app.listen(PORT, () => {
     console.log(`\n\t*** Server listening on PORT ${PORT} (${NODE_ENV}) ***`);
+    console.log(`\tAllowed origins:`, Array.from(allowedOrigins));
   });
 
-  // optional: timeouts untuk request lama agar lebih terkontrol
   server.requestTimeout = Number(process.env.SERVER_REQUEST_TIMEOUT_MS || 120_000);
   server.headersTimeout = Number(process.env.SERVER_HEADERS_TIMEOUT_MS || 125_000);
   server.keepAliveTimeout = Number(process.env.SERVER_KEEPALIVE_TIMEOUT_MS || 65_000);
@@ -297,21 +292,17 @@ async function start() {
       }
     });
 
-    // fallback hard-exit
     setTimeout(() => process.exit(1), 10_000).unref();
   };
 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-  // penting: jangan biarkan unhandled crash tanpa log
   process.on('unhandledRejection', (reason) => {
     console.error('[UNHANDLED_REJECTION]', reason);
   });
   process.on('uncaughtException', (err) => {
     console.error('[UNCAUGHT_EXCEPTION]', err);
-    // opsional: exit biar PM2 restart bersih
-    // process.exit(1);
   });
 
   module.exports = server;
