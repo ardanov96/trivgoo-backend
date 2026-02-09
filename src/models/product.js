@@ -10,15 +10,6 @@ async function query(sql, params = []) {
   }
 }
 
-function safe_parse_json(value, fallback) {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value);
-  } catch (e) {
-    return fallback;
-  }
-}
-
 async function list_all_products() {
   const rows = await query(`
     SELECT p.*, u.name AS owner_name 
@@ -31,9 +22,10 @@ async function list_all_products() {
   return rows.map(row => ({
     ...row,
     price: Number(row.price),
-    // GANTI safeJsonParse MENJADI safe_parse_json
-    features: safe_parse_json(row.features, []), 
-    details: safe_parse_json(row.details, {})
+    rating: row.rating ? Number(row.rating) : 0,
+    image: row.image_url,  // Tambahkan field ini
+    features: safeJsonParse(row.features, []),  // Gunakan safeJsonParse (konsisten)
+    details: safeJsonParse(row.details, {})
   }));
 }
 
@@ -119,9 +111,6 @@ async function build_product_response(row) {
 
   const images = await find_product_images(row.id);
   const blocked_dates = await find_product_blocked_dates(row.id);
-
-  const features = safe_parse_json(row.features, []);
-  const details = safe_parse_json(row.details, null);
 
   return {
     id: row.id,
