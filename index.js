@@ -261,15 +261,25 @@ async function start() {
     console.error("[ERROR] Failed to fetch settings on startup, using defaults:", err.message);
   }
 
-  // ✅ session harus dipasang sebelum routes
   app.use(session(buildSessionOptions(dbSettings.session_timeout)));
 
+  // ✅ Route Settings (Menghasilkan /api/settings dsb)
   app.use('/api', settingsRoutes);
 
-  // ✅ routes
-  app.use('/', routerNav);
+  // ✅ Route Utama (Menghasilkan /api/v1/products dsb)
+  app.use('/api', routerNav);
 
-  app.use((_, res) => res.sendStatus(404));
+  // ⚠️ Handler 404 yang lebih informatif untuk Debugging
+  app.use((req, res) => {
+    if (IS_DEV) {
+      console.warn(`[404] Route tidak ditemukan: ${req.method} ${req.originalUrl}`);
+    }
+    res.status(404).json({
+      status: 404,
+      error: true,
+      message: `Endpoint ${req.originalUrl} tidak ditemukan di server.`
+    });
+  });
 
   app.use(errorHandler);
 
