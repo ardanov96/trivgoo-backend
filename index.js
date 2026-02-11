@@ -87,8 +87,15 @@ app.use('/api', (_, res, next) => {
   next();
 });
 
+console.log("Checking routerNav...");
+
 // Mount Main Router
 app.use('/', routerNav);
+
+app.use((req, res) => {
+    console.log(`[REJECTED] 404 pada: ${req.method} ${req.url}`);
+    res.status(404).send('Not Found via Express Final Handler');
+});
 
 // --------------------
 // 5. ERROR HANDLERS
