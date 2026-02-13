@@ -139,6 +139,22 @@ async function list_agent_products_admin(params = {}) {
   };
 }
 
+async function get_dashboard_summary() {
+  const sql = `
+    SELECT
+      COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN total_price END), 0) AS total_revenue,
+      COUNT(*) AS total_bookings,
+      SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) AS completed_bookings,
+      SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending_bookings,
+      SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END) AS cancelled_bookings
+    FROM bookings
+  `;
+
+  const [rows] = await conn.query(sql);
+
+  return rows[0];
+}
+
 async function get_agent_product_detail_admin(product_id) {
   const sql = `
     SELECT
@@ -419,4 +435,5 @@ module.exports = {
   list_customer_users,
   list_agent_products_admin,
   get_agent_product_detail_admin,
+  get_dashboard_summary,
 };

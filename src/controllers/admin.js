@@ -6,6 +6,7 @@ const {
   list_customer_users,
   list_agent_products_admin,
   get_agent_product_detail_admin,
+  get_dashboard_summary,
 } = require('../models/admin');
 
 function normalize_verification_action(action) {
@@ -118,10 +119,25 @@ async function update_agent_verification(req, res) {
     return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
   }
 }
+
+async function dashboard_summary(req, res) {
+  try {
+    ensure_admin(req);
+
+    const summary = await get_dashboard_summary();
+
+    return misc.response(res, 200, false, 'OK', summary);
+  } catch (e) {
+    console.error(e);
+    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
+  }
+}
+
 module.exports = {
   list_agents,
   list_customers,
   list_agent_products,
   get_agent_product_detail,
   update_agent_verification,
+  dashboard_summary,
 };
