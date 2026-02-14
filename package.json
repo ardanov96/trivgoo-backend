@@ -7,7 +7,28 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "nodemon app",
     "seed:user": "node seeders/userSeeder.js",
-    "seed:product": "node seeders/productSeeder.js"
+    "seed:product": "node seeders/productSeeder.js",
+    
+    "_comment_knex_migrations": "===== Knex Migration Scripts =====",
+    "migrate": "knex migrate:latest --knexfile knexfile.js",
+    "migrate:make": "knex migrate:make --knexfile knexfile.js",
+    "migrate:up": "knex migrate:up --knexfile knexfile.js",
+    "migrate:down": "knex migrate:down --knexfile knexfile.js",
+    "migrate:rollback": "knex migrate:rollback --knexfile knexfile.js",
+    "migrate:rollback:all": "knex migrate:rollback --all --knexfile knexfile.js",
+    "migrate:status": "knex migrate:status --knexfile knexfile.js",
+    "migrate:list": "knex migrate:list --knexfile knexfile.js",
+    "migrate:unlock": "knex migrate:unlock --knexfile knexfile.js",
+    "migrate:version": "knex migrate:currentVersion --knexfile knexfile.js",
+    
+    "_comment_knex_seeds": "===== Knex Seed Scripts =====",
+    "seed:knex": "knex seed:run --knexfile knexfile.js",
+    "seed:knex:make": "knex seed:make --knexfile knexfile.js",
+    
+    "_comment_database": "===== Database Management Scripts =====",
+    "db:setup": "npm run migrate && npm run seed:knex",
+    "db:reset": "npm run migrate:rollback:all && npm run migrate && npm run seed:knex",
+    "db:fresh": "npm run migrate:rollback:all && npm run migrate"
   },
   "keywords": [],
   "author": "",
