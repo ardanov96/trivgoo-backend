@@ -1,341 +1,221 @@
-const conn = require("../configs/db");
+const db = require('../configs/db');
 
-async function list_agent_products_admin(params = {}) {
-  const owner_id = params.owner_id ? Number(params.owner_id) : null;
-  const q = params.q ? String(params.q).trim() : "";
-  const page = params.page ? Math.max(1, Number(params.page)) : 1;
-  const limit = params.limit
-    ? Math.min(100, Math.max(1, Number(params.limit)))
-    : 20;
-  const offset = (page - 1) * limit;
+const AGENT_TYPES = new Set(['INDIVIDUAL', 'CORPORATE']);
+const SPECIALIZATIONS = new Set(['TOUR', 'STAY', 'TRANSPORT']);
+const VERIF_STATUS = new Set(['PENDING', 'APPROVED', 'VERIFIED', 'REJECTED']);
 
-  const where = [`u.role = 'AGENT'`];
-  const values = [];
+function pick_enum(val, set, fallback) {
+  const v = String(val || '').toUpperCase();
+  return set.has(v) ? v : fallback;
+}
 
-  if (owner_id && Number.isFinite(owner_id)) {
-    where.push(`p.owner_id = ?`);
-    values.push(owner_id);
-  }
+function normalize_upsert_payload(payload) {
+  if (!payload) throw new Error('payload is required');
 
-  if (q) {
-    where.push(`(p.name LIKE ? OR p.location LIKE ?)`);
-    values.push(`%${q}%`, `%${q}%`);
-  }
+  const user_id = payload.user_id ?? payload.userId;
+  if (!user_id) throw new Error('user_id is required');
 
-  const where_sql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+  const uid = Number(user_id);
+  if (!Number.isFinite(uid) || uid <= 0) throw new Error('user_id is invalid');
 
-  // COUNT: tidak perlu DISTINCT kalau tidak join ke product_images
-  const count_sql = `
-    SELECT COUNT(*) AS total
-    FROM products p
-    JOIN users u ON u.id = p.owner_id
-    ${where_sql}
-  `;
+  const agent_type = pick_enum(payload.agent_type ?? payload.agentType, AGENT_TYPES, 'INDIVIDUAL');
+  const specialization = pick_enum(payload.specialization, SPECIALIZATIONS, 'TOUR');
 
-  const [count_rows] = await conn.query(count_sql, values);
-  const total = Number(count_rows?.[0]?.total || 0);
+  const id_card_number = String(payload.id_card_number).trim();
+  const tax_id = String(payload.tax_id).trim();
+  const bank_name = String(payload.bank_name).trim();
+  const bank_account_number = String(payload.bank_account_number).trim();
+  const bank_account_holder = String(payload.bank_account_holder).trim();
 
-  /**
-   * DATA:
-   * - Hindari GROUP BY + GROUP_CONCAT
-   * - Ambil images_json per product via subquery (ordered)
-   */
-  const sql = `
-    SELECT
-      p.id,
-      p.owner_id,
-      p.category_id,
-      p.name,
-      p.description,
-      p.price,
-      p.currency,
-      p.location,
-      p.image_url,
-      p.features,
-      p.details,
-      p.daily_capacity,
-      p.lat,
-      p.lng,
-      p.rating,
-      p.is_active,
-      p.created_at,
-      p.updated_at,
+  if (!id_card_number) throw new Error('id_card_number is required');
+  if (!tax_id) throw new Error('tax_id is required');
+  if (!bank_name) throw new Error('bank_name is required');
+  if (!bank_account_number) throw new Error('bank_account_number is required');
+  if (!bank_account_holder) throw new Error('bank_account_holder is required');
 
-      u.name AS owner_name,
-      u.email AS owner_email,
-      up.avatar_url AS owner_avatar,
-
-      COALESCE(
-        (
-          SELECT JSON_ARRAYAGG(t.obj)
-          FROM (
-            SELECT JSON_OBJECT(
-              'id', pi.id,
-              'url', pi.image_url,
-              'sort_order', pi.sort_order,
-              'created_at', pi.created_at
-            ) AS obj
-            FROM product_images pi
-            WHERE pi.product_id = p.id
-            ORDER BY pi.sort_order ASC, pi.id ASC
-          ) t
-        ),
-        JSON_ARRAY()
-      ) AS images_json
-
-    FROM products p
-    JOIN users u ON u.id = p.owner_id
-    LEFT JOIN user_profiles up ON up.user_id = u.id
-    ${where_sql}
-    ORDER BY p.created_at DESC
-    LIMIT ? OFFSET ?
-  `;
-
-  const [rows] = await conn.query(sql, [...values, limit, offset]);
-
-  const data = rows.map((r) => ({
-    id: r.id,
-    owner_id: r.owner_id,
-    category_id: r.category_id,
-    name: r.name,
-    description: r.description,
-    price: r.price != null ? Number(r.price) : 0,
-    currency: r.currency,
-    location: r.location,
-
-    // konsisten seperti list owner/get by id
-    image: r.image_url, // cover lama
-    images: safe_images_json(r.images_json), // gallery objects
-
-    // kalau kamu masih butuh field lama:
-    image_url: r.image_url,
-
-    features: safe_json_array(r.features),
-    details: safe_json_object(r.details),
-    daily_capacity: r.daily_capacity != null ? Number(r.daily_capacity) : null,
-    lat: r.lat,
-    lng: r.lng,
-    rating: r.rating != null ? Number(r.rating) : 0,
-    is_active: !!r.is_active,
-    created_at: r.created_at,
-    updated_at: r.updated_at,
-
-    owner: {
-      id: r.owner_id,
-      name: r.owner_name,
-      email: r.owner_email,
-      avatar_url: r.owner_avatar || null,
-    },
-  }));
+  const company_name = payload.company_name;
+  const id_document_url = payload.id_document_url;
 
   return {
-    meta: {
-      page,
-      limit,
-      total,
-      total_pages: Math.ceil(total / limit),
-    },
-    data,
+    user_id: uid,
+    agent_type,
+    specialization,
+    id_card_number,
+    tax_id,
+    company_name: company_name,
+    bank_name,
+    bank_account_number,
+    bank_account_holder,
+    id_document_url: id_document_url,
   };
 }
 
-async function get_dashboard_summary() {
-  const sql = `
-    SELECT
-      -- Statistik Booking (dari tabel bookings)
-      (SELECT COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN total_price END), 0) FROM bookings) AS total_revenue,
-      (SELECT COUNT(*) FROM bookings) AS total_bookings,
-      (SELECT SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) FROM bookings) AS completed_bookings,
-      (SELECT SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) FROM bookings) AS pending_bookings,
-      (SELECT SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END) FROM bookings) AS cancelled_bookings,
+async function upsert_agent_verification(payload) {
+  const data = normalize_upsert_payload(payload);
 
-      -- Statistik User (Kriteria Baru)
-      (SELECT COUNT(*) FROM users WHERE role = 'AGENT' AND verification_status = 'VERIFIED') AS active_agents,
-      (SELECT COUNT(*) FROM users WHERE role = 'CUSTOMER' AND is_active = 1) AS active_customers
-    FROM DUAL
+  const sql = `
+    INSERT INTO agent_verifications (
+      user_id,
+      agent_type,
+      specialization,
+      id_card_number,
+      tax_id,
+      company_name,
+      bank_name,
+      bank_account_number,
+      bank_account_holder,
+      id_document_url,
+      status
+    ) VALUES (
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING'
+    )
+    ON DUPLICATE KEY UPDATE
+      agent_type           = VALUES(agent_type),
+      specialization       = VALUES(specialization),
+      id_card_number       = VALUES(id_card_number),
+      tax_id               = VALUES(tax_id),
+      company_name         = VALUES(company_name),
+      bank_name            = VALUES(bank_name),
+      bank_account_number  = VALUES(bank_account_number),
+      bank_account_holder  = VALUES(bank_account_holder),
+      id_document_url      = VALUES(id_document_url),
+      status               = 'PENDING',
+      rejection_reason     = NULL,
+      reviewed_at          = NULL,
+      reviewed_by          = NULL,
+      updated_at           = CURRENT_TIMESTAMP
   `;
 
-  const [rows] = await conn.query(sql);
+  const params = [
+    data.user_id,
+    data.agent_type,
+    data.specialization,
+    data.id_card_number,
+    data.tax_id,
+    data.company_name,
+    data.bank_name,
+    data.bank_account_number,
+    data.bank_account_holder,
+    data.id_document_url,
+  ];
 
-  return rows[0];
+  const [result] = await db.query(sql, params);
+  return result;
 }
 
-async function get_agent_product_detail_admin(product_id) {
+async function find_verification_by_user_id(user_id) {
   const sql = `
     SELECT
-      p.id,
-      p.owner_id,
-      p.category_id,
-      p.name,
-      p.description,
-      p.price,
-      p.currency,
-      p.location,
-      p.image_url,
-      p.daily_capacity,
-      p.lat,
-      p.lng,
-      p.rating,
-      p.is_active,
-      p.features,
-      p.details,
-      p.created_at,
-      p.updated_at,
-
-      u.id AS owner_user_id,
-      u.name AS owner_name,
-      u.email AS owner_email,
-      up.avatar_url AS owner_avatar_url
-
-    FROM products p
-    JOIN users u ON u.id = p.owner_id
-    LEFT JOIN user_profiles up ON up.user_id = u.id
-    WHERE p.id = ?
+      av.*,
+      u.verification_status
+    FROM agent_verifications av
+    JOIN users u ON u.id = av.user_id
+    WHERE av.user_id = ?
+    ORDER BY av.id DESC
     LIMIT 1
   `;
 
-  const [rows] = await conn.query(sql, [product_id]);
-  const row = rows?.[0];
-  if (!row) return null;
+  const [rows] = await db.query(sql, [user_id]);
+  return rows[0] || null;
+}
 
-  const imgSql = `
-    SELECT id, image_url AS url, created_at, sort_order
-    FROM product_images
-    WHERE product_id = ?
-    ORDER BY sort_order ASC, id ASC
+async function update_agent_verification_status(user_id, status) {
+  const st = String(status || '').toUpperCase();
+  if (!VERIF_STATUS.has(st)) throw new Error('Invalid verification status');
+
+  const sql = `
+    UPDATE agent_verifications
+    SET status = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE user_id = ?
   `;
-  const [imgRows] = await conn.query(imgSql, [product_id]);
 
-  const featuresArr = Array.isArray(row.features)
-    ? row.features
-    : safeJsonParse(row.features, []);
-
-  const detailsObj =
-    typeof row.details === "object" && row.details !== null
-      ? row.details
-      : safeJsonParse(row.details, {});
-
-  const image = row.image_url || null;
-
-  return {
-    id: row.id,
-    owner_id: row.owner_id,
-    category_id: row.category_id,
-    name: row.name,
-    description: row.description,
-    price: row.price,
-    currency: row.currency,
-    location: row.location,
-
-    image,
-    images: imgRows || [],
-    image_url: row.image_url,
-
-    features: featuresArr,
-    details: detailsObj,
-
-    daily_capacity: row.daily_capacity,
-    rating: row.rating,
-    lat: row.lat,
-    lng: row.lng,
-    is_active: !!row.is_active,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-
-    owner: {
-      id: row.owner_user_id,
-      name: row.owner_name,
-      email: row.owner_email,
-      avatar_url: row.owner_avatar_url,
-    },
-  };
+  const [result] = await db.query(sql, [st, user_id]);
+  return result;
 }
 
-/**
- * JSON helpers yang tahan:
- * - mysql2 bisa balikin: object/array, string JSON, atau Buffer
- */
-function safe_images_json(v) {
-  if (v == null) return [];
-  if (Array.isArray(v)) return v;
+async function set_agent_verification_decision({
+  user_id,
+  action,
+  reviewed_by = null,
+  rejection_reason = null,
+}) {
+  const uid = Number(user_id);
+  if (!Number.isFinite(uid) || uid <= 0) throw new Error('user_id is invalid');
 
-  if (Buffer.isBuffer(v)) {
-    try {
-      const parsed = JSON.parse(v.toString("utf8"));
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
+  const act = String(action || '').toUpperCase();
+  if (!['APPROVE', 'REJECT'].includes(act)) throw new Error('action must be APPROVE or REJECT');
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [vrows] = await conn.query(
+      `SELECT id FROM agent_verifications WHERE user_id = ? ORDER BY id DESC LIMIT 1`,
+      [uid],
+    );
+    if (!vrows[0]) throw new Error('Agent verification not found for this user');
+
+    if (act === 'APPROVE') {
+      await conn.query(
+        `
+        UPDATE agent_verifications
+        SET
+          status = 'APPROVED',
+          reviewed_by = ?,
+          reviewed_at = CURRENT_TIMESTAMP,
+          rejection_reason = NULL,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+        `,
+        [reviewed_by, uid],
+      );
+
+      await conn.query(
+        `
+        UPDATE users
+        SET verification_status = 'VERIFIED', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        `,
+        [uid],
+      );
+    } else {
+      const reason = rejection_reason ? String(rejection_reason).trim() : 'Rejected by admin';
+
+      await conn.query(
+        `
+        UPDATE agent_verifications
+        SET
+          status = 'REJECTED',
+          reviewed_by = ?,
+          reviewed_at = CURRENT_TIMESTAMP,
+          rejection_reason = ?,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+        `,
+        [reviewed_by, reason, uid],
+      );
+
+      await conn.query(
+        `
+        UPDATE users
+        SET verification_status = 'REJECTED', updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        `,
+        [uid],
+      );
     }
-  }
 
-  if (typeof v === "string") {
-    try {
-      const parsed = JSON.parse(v);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
+    await conn.commit();
+    return { ok: true };
+  } catch (e) {
+    await conn.rollback();
+    throw e;
+  } finally {
+    conn.release();
   }
-
-  return [];
 }
 
-function safe_json_array(v) {
-  if (v == null || v === "") return [];
-  if (Array.isArray(v)) return v;
-
-  if (Buffer.isBuffer(v)) {
-    try {
-      const parsed = JSON.parse(v.toString("utf8"));
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-
-  if (typeof v === "string") {
-    try {
-      const parsed = JSON.parse(v);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  }
-
-  return [];
-}
-
-function safe_json_object(v) {
-  if (v == null || v === "") return {};
-  if (typeof v === "object" && !Array.isArray(v) && !Buffer.isBuffer(v))
-    return v;
-
-  if (Buffer.isBuffer(v)) {
-    try {
-      const parsed = JSON.parse(v.toString("utf8"));
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed
-        : {};
-    } catch {
-      return {};
-    }
-  }
-
-  if (typeof v === "string") {
-    try {
-      const parsed = JSON.parse(v);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed
-        : {};
-    } catch {
-      return {};
-    }
-  }
-
-  return {};
-}
-
-async function list_agent_users() {
+async function list_agent_users_with_verification() {
   const sql = `
     SELECT
       u.id,
@@ -343,102 +223,178 @@ async function list_agent_users() {
       u.email,
       u.role,
       u.verification_status,
-      u.specialization,
-      up.avatar_url,
-
-      av.id                   AS av_id,
-      av.user_id              AS av_user_id,
-      av.agent_type           AS av_agent_type,
-      av.id_card_number       AS av_id_card_number,
-      av.tax_id               AS av_tax_id,
-      av.company_name         AS av_company_name,
-      av.bank_name            AS av_bank_name,
-      av.bank_account_number  AS av_bank_account_number,
-      av.bank_account_holder  AS av_bank_account_holder,
-      av.specialization       AS av_specialization,
-      av.id_document_url      AS av_id_document_url,
-      av.status               AS av_status,
-      av.reviewed_by          AS av_reviewed_by,
-      av.reviewed_at          AS av_reviewed_at,
-      av.rejection_reason     AS av_rejection_reason,
-      av.created_at           AS av_created_at,
-      av.updated_at           AS av_updated_at
-
+      u.specialization AS user_specialization,
+      up.avatar_url AS avatar,
+      av.id            AS v_id,
+      av.user_id       AS v_user_id,
+      av.agent_type    AS v_agent_type,
+      av.id_card_number AS v_id_card_number,
+      av.tax_id        AS v_tax_id,
+      av.company_name  AS v_company_name,
+      av.bank_name     AS v_bank_name,
+      av.bank_account_number AS v_bank_account_number,
+      av.bank_account_holder AS v_bank_account_holder,
+      av.specialization AS v_specialization,
+      av.id_document_url AS v_id_document_url,
+      av.status        AS v_status,
+      av.reviewed_by   AS v_reviewed_by,
+      av.reviewed_at   AS v_reviewed_at,
+      av.rejection_reason AS v_rejection_reason,
+      av.created_at    AS v_created_at,
+      av.updated_at    AS v_updated_at
     FROM users u
-    LEFT JOIN agent_verifications av
-      ON av.user_id = u.id
     LEFT JOIN user_profiles up
       ON up.user_id = u.id
+    LEFT JOIN agent_verifications av
+      ON av.user_id = u.id
+     AND av.id = (
+       SELECT av2.id
+       FROM agent_verifications av2
+       WHERE av2.user_id = u.id
+       ORDER BY av2.id DESC
+       LIMIT 1
+     )
     WHERE u.role = 'AGENT'
     ORDER BY u.created_at DESC
   `;
 
-  const [rows] = await conn.query(sql);
+  const [rows] = await db.query(sql);
 
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    role: row.role,
-    avatar: row.avatar_url || null,
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    email: r.email,
+    role: r.role,
+    avatar: r.avatar || null,
+    verification_status: r.verification_status,
+    specialization: r.user_specialization || null,
 
-    verification_status: row.verification_status,
-    specialization: row.specialization || null,
-
-    verification: row.av_id
+    verification: r.v_id
       ? {
-          id: row.av_id,
-          user_id: row.av_user_id,
-          agent_type: row.av_agent_type,
-          id_card_number: row.av_id_card_number,
-          tax_id: row.av_tax_id,
-          company_name: row.av_company_name,
-          bank_name: row.av_bank_name,
-          bank_account_number: row.av_bank_account_number,
-          bank_account_holder: row.av_bank_account_holder,
-          specialization: row.av_specialization,
-          id_document_url: row.av_id_document_url,
-          status: row.av_status,
-          reviewed_by: row.av_reviewed_by,
-          reviewed_at: row.av_reviewed_at,
-          rejection_reason: row.av_rejection_reason,
-          created_at: row.av_created_at,
-          updated_at: row.av_updated_at,
+          id: r.v_id,
+          user_id: r.v_user_id,
+          agent_type: r.v_agent_type,
+          id_card_number: r.v_id_card_number,
+          tax_id: r.v_tax_id,
+          company_name: r.v_company_name,
+          bank_name: r.v_bank_name,
+          bank_account_number: r.v_bank_account_number,
+          bank_account_holder: r.v_bank_account_holder,
+          specialization: r.v_specialization,
+          id_document_url: r.v_id_document_url,
+          status: r.v_status,
+          reviewed_by: r.v_reviewed_by,
+          reviewed_at: r.v_reviewed_at,
+          rejection_reason: r.v_rejection_reason,
+          created_at: r.v_created_at,
+          updated_at: r.v_updated_at,
         }
       : null,
   }));
 }
 
-async function list_customer_users() {
+/**
+ * NEW: Get agent dashboard statistics
+ * @param {number} agent_id - User ID of the agent
+ */
+async function get_agent_dashboard_stats(agent_id) {
+  const uid = Number(agent_id);
+  if (!Number.isFinite(uid) || uid <= 0) {
+    throw new Error('Invalid agent_id');
+  }
+
   const sql = `
     SELECT
-      u.id,
-      u.name,
-      u.email,
-      u.role,
-      up.avatar_url
-    FROM users u
-    LEFT JOIN user_profiles up
-      ON up.user_id = u.id
-    WHERE u.role = 'CUSTOMER'
-    ORDER BY u.created_at DESC
+      -- Total commission dari bookings yang COMPLETED
+      -- Asumsi: products yang dimiliki agent akan di-booking oleh customer
+      (
+        SELECT COALESCE(SUM(b.total_price), 0)
+        FROM bookings b
+        JOIN products p ON p.id = b.product_id
+        WHERE p.owner_id = ?
+          AND b.status = 'COMPLETED'
+      ) AS total_commission,
+
+      -- Bookings bulan ini (untuk products milik agent ini)
+      (
+        SELECT COUNT(*)
+        FROM bookings b
+        JOIN products p ON p.id = b.product_id
+        WHERE p.owner_id = ?
+          AND b.date >= DATE_FORMAT(CURDATE(), '%Y-%m-01')
+      ) AS bookings_this_month,
+
+      -- Active customers (unique customers yang pernah booking products agent ini)
+      (
+        SELECT COUNT(DISTINCT b.user_id)
+        FROM bookings b
+        JOIN products p ON p.id = b.product_id
+        WHERE p.owner_id = ?
+      ) AS active_customers,
+
+      -- Total products milik agent ini
+      (
+        SELECT COUNT(*)
+        FROM products
+        WHERE owner_id = ?
+          AND is_active = 1
+      ) AS total_products
+
+    FROM DUAL
   `;
 
-  const [rows] = await conn.query(sql);
+  const [rows] = await db.query(sql, [uid, uid, uid, uid]);
+  return rows[0];
+}
 
-  return rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    email: row.email,
-    role: row.role,
-    avatar: row.avatar_url || null,
+/**
+ * NEW: Get weekly sales performance for agent
+ * @param {number} agent_id - User ID of the agent
+ */
+async function get_agent_weekly_sales(agent_id) {
+  const uid = Number(agent_id);
+  if (!Number.isFinite(uid) || uid <= 0) {
+    throw new Error('Invalid agent_id');
+  }
+
+  const sql = `
+    SELECT
+      DAYNAME(b.date) AS day_name,
+      DAYOFWEEK(b.date) AS day_num,
+      COALESCE(SUM(b.total_price), 0) AS sales
+    FROM bookings b
+    JOIN products p ON p.id = b.product_id
+    WHERE p.owner_id = ?
+      AND b.status = 'COMPLETED'
+      AND b.date >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+    GROUP BY day_name, day_num
+    ORDER BY day_num
+  `;
+
+  const [rows] = await db.query(sql, [uid]);
+
+  // Format ke struktur yang diharapkan frontend
+  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const salesMap = new Map();
+
+  rows.forEach(row => {
+    const dayIndex = row.day_num - 1; // MySQL DAYOFWEEK: 1=Sunday, convert to 0-indexed
+    salesMap.set(dayIndex, Number(row.sales));
+  });
+
+  // Buat array lengkap untuk 7 hari terakhir
+  return daysOfWeek.map((name, index) => ({
+    name,
+    sales: salesMap.get(index) || 0
   }));
 }
 
 module.exports = {
-  list_agent_users,
-  list_customer_users,
-  list_agent_products_admin,
-  get_agent_product_detail_admin,
-  get_dashboard_summary,
+  upsert_agent_verification,
+  find_verification_by_user_id,
+  update_agent_verification_status,
+  set_agent_verification_decision,
+  list_agent_users_with_verification,
+  get_agent_dashboard_stats,
+  get_agent_weekly_sales,
 };

@@ -2,7 +2,12 @@ const path = require('path');
 const fs = require('fs');
 
 const misc = require('../helpers/response');
-const { upsert_agent_verification, find_verification_by_user_id } = require('../models/agent');
+const {
+  upsert_agent_verification,
+  find_verification_by_user_id,
+  get_agent_dashboard_stats,
+  get_agent_weekly_sales,
+} = require('../models/agent');
 
 const { update_verification_status } = require('../models/user');
 
@@ -73,7 +78,6 @@ module.exports = {
       };
 
       await upsert_agent_verification(payload);
-
       await update_verification_status(user_id, 'PENDING');
 
       return misc.response(res, 200, false, 'Verification submitted, status PENDING');
@@ -90,6 +94,52 @@ module.exports = {
 
       const verification = await find_verification_by_user_id(user_id);
       return misc.response(res, 200, false, 'OK', verification);
+    } catch (e) {
+      console.error(e);
+      return misc.response(res, 500, true, e.message || 'Internal server error');
+    }
+  },
+
+  /**
+   * NEW: Get agent dashboard statistics
+   * GET /api/v1/agent/dashboard/stats
+   */
+  get_dashboard_stats: async (req, res) => {
+    try {
+      const user_id = req.session?.user?.id;
+      if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
+
+      // Pastikan user adalah agent
+      const user_role = req.session?.user?.role;
+      if (user_role !== 'AGENT') {
+        return misc.response(res, 403, true, 'Forbidden: Only agents can access this endpoint');
+      }
+
+      const stats = await get_agent_dashboard_stats(user_id);
+      return misc.response(res, 200, false, 'OK', stats);
+    } catch (e) {
+      console.error(e);
+      return misc.response(res, 500, true, e.message || 'Internal server error');
+    }
+  },
+
+  /**
+   * NEW: Get agent weekly sales data
+   * GET /api/v1/agent/dashboard/weekly-sales
+   */
+  get_weekly_sales: async (req, res) => {
+    try {
+      const user_id = req.session?.user?.id;
+      if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
+
+      // Pastikan user adalah agent
+      const user_role = req.session?.user?.role;
+      if (user_role !== 'AGENT') {
+        return misc.response(res, 403, true, 'Forbidden: Only agents can access this endpoint');
+      }
+
+      const sales = await get_agent_weekly_sales(user_id);
+      return misc.response(res, 200, false, 'OK', sales);
     } catch (e) {
       console.error(e);
       return misc.response(res, 500, true, e.message || 'Internal server error');

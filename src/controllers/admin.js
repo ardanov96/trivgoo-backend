@@ -110,7 +110,6 @@ async function update_agent_verification(req, res) {
     }
 
     await update_verification_status(user_id, new_status);
-
     await update_agent_verification_status(user_id, new_status);
 
     return misc.response(res, 200, false, `Agent verification ${new_status}`);
@@ -120,11 +119,23 @@ async function update_agent_verification(req, res) {
   }
 }
 
+/**
+ * UPDATED: Dashboard summary dengan support filter range
+ * Query parameter: range ('7days', 'month', 'year')
+ * Example: GET /api/v1/admin/dashboard/summary?range=month
+ */
 async function dashboard_summary(req, res) {
   try {
     ensure_admin(req);
 
-    const summary = await get_dashboard_summary();
+    // Ambil parameter range dari query string
+    const { range } = req.query;
+    
+    // Validasi range (opsional, model akan default ke '7days')
+    const validRanges = ['7days', 'month', 'year'];
+    const selectedRange = validRanges.includes(range) ? range : '7days';
+
+    const summary = await get_dashboard_summary({ range: selectedRange });
 
     return misc.response(res, 200, false, 'OK', summary);
   } catch (e) {
