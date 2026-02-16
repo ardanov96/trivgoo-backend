@@ -142,12 +142,17 @@ async function list_agent_products_admin(params = {}) {
 async function get_dashboard_summary() {
   const sql = `
     SELECT
-      COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN total_price END), 0) AS total_revenue,
-      COUNT(*) AS total_bookings,
-      SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) AS completed_bookings,
-      SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) AS pending_bookings,
-      SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END) AS cancelled_bookings
-    FROM bookings
+      -- Statistik Booking (dari tabel bookings)
+      (SELECT COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN total_price END), 0) FROM bookings) AS total_revenue,
+      (SELECT COUNT(*) FROM bookings) AS total_bookings,
+      (SELECT SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END) FROM bookings) AS completed_bookings,
+      (SELECT SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END) FROM bookings) AS pending_bookings,
+      (SELECT SUM(CASE WHEN status = 'CANCELLED' THEN 1 ELSE 0 END) FROM bookings) AS cancelled_bookings,
+
+      -- Statistik User (Kriteria Baru)
+      (SELECT COUNT(*) FROM users WHERE role = 'AGENT' AND verification_status = 'VERIFIED') AS active_agents,
+      (SELECT COUNT(*) FROM users WHERE role = 'CUSTOMER' AND is_active = 1) AS active_customers
+    FROM DUAL
   `;
 
   const [rows] = await conn.query(sql);
