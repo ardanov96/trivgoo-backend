@@ -215,6 +215,82 @@ async function set_agent_verification_decision({
   }
 }
 
+async function get_dashboard_summary({ range = 'all' }) {
+  // 1. Tentukan jumlah hari berdasarkan range
+  const ranges = {
+    '7days': 7,
+    'month': 30,
+    'year': 365
+  };
+
+  const days = ranges[range];
+
+  // 2. Buat filter SQL. Jika range adalah 'all' (days undefined), maka filter kosong.
+  // PENTING: Gunakan WHERE 1=1 agar kita bisa menambah AND di belakangnya dengan aman.
+  const bookingDateFilter = days 
+    ? `AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)` 
+    : "";
+    
+  const userDateFilter = days 
+    ? `AND updated_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)` 
+    : "";
+
+  const sql = `
+    SELECT 
+      -- Revenue & Booking Stats
+      (SELECT COALESCE(SUM(total_price), 0) FROM bookings WHERE status = 'COMPLETED' ${bookingDateFilter}) as total_revenue,
+      (SELECT COUNT(*) FROM bookings WHERE 1=1 ${bookingDateFilter}) as total_bookings,
+      (SELECT COUNT(*) FROM bookings WHERE status = 'COMPLETED' ${bookingDateFilter}) as completed_bookings,
+      (SELECT COUNT(*) FROM bookings WHERE status = 'PENDING' ${bookingDateFilter}) as pending_bookings,
+      (SELECT COUNT(*) FROM bookings WHERE status = 'CANCELLED' ${bookingDateFilter}) as cancelled_bookings,
+
+      -- User Stats
+      (
+        SELECT COUNT(*) FROM users 
+        WHERE role = 'AGENT' AND verification_status = 'VERIFIED'
+        ${userDateFilter}
+      ) as active_agents,
+      (
+        SELECT COUNT(*) FROM users 
+        WHERE role = 'CUSTOMER' AND is_active = 1
+        ${userDateFilter}
+      ) as active_customers
+  `;
+
+  const [rows] = await db.query(sql);
+  return rows[0];
+}
+
+async function list_all_bookings_admin() {
+  const sql = `
+    SELECT 
+      b.id,
+      u.name as userName,
+      p.name as productName,
+      b.quantity,
+      b.total_price as totalPrice,
+      b.status,
+      DATE_FORMAT(b.created_at, '%Y-%m-%d') as date
+    FROM bookings b
+    LEFT JOIN users u ON b.user_id = u.id
+    LEFT JOIN products p ON b.product_id = p.id
+    ORDER BY b.created_at DESC
+  `;
+  const [rows] = await db.query(sql);
+  return rows;
+}
+
+async function list_customer_users() {
+  const sql = `
+    SELECT id, name, email, role, created_at 
+    FROM users 
+    WHERE role = 'CUSTOMER' 
+    ORDER BY created_at DESC
+  `;
+  const [rows] = await db.query(sql);
+  return rows;
+}
+
 async function list_agent_users_with_verification() {
   const sql = `
     SELECT
@@ -291,6 +367,81 @@ async function list_agent_users_with_verification() {
         }
       : null,
   }));
+}
+
+async function list_agent_products_admin({ owner_id, q, page = 1, limit = 10 }) {
+  const offset = (Number(page) - 1) * Number(limit);
+  let whereClause = "WHERE 1=1";
+  let params = [];
+
+  if (owner_id) {
+    whereClause += " AND p.owner_id = ?";
+    params.push(owner_id);
+  }
+
+  if (q) {
+    whereClause += " AND (p.name LIKE ? OR p.description LIKE ?)";
+    params.push(`%${q}%`, `%${q}%`);
+  }
+
+  // Query untuk mengambil data produk + info owner
+  const sql = `
+    SELECT 
+      p.*, 
+      u.name as owner_name, 
+      u.email as owner_email,
+      up.avatar_url as owner_avatar
+    FROM products p
+    LEFT JOIN users u ON p.owner_id = u.id
+    LEFT JOIN user_profiles up ON up.user_id = u.id
+    ${whereClause}
+    ORDER BY p.created_at DESC
+    LIMIT ? OFFSET ?
+  `;
+
+  // Query untuk total pagination
+  const countSql = `SELECT COUNT(*) as total FROM products p ${whereClause}`;
+
+  const [rows] = await db.query(sql, [...params, Number(limit), offset]);
+  const [countResult] = await db.query(countSql, params);
+
+  const total = countResult[0].total;
+
+  // Format data agar sesuai dengan kebutuhan Frontend (AdminProducts.tsx)
+  const formattedData = rows.map(p => ({
+    id: p.id,
+    name: p.name,
+    price: p.price,
+    currency: 'IDR', // atau p.currency jika ada di tabel
+    image_url: p.image_url || p.image,
+    owner: {
+      name: p.owner_name,
+      email: p.owner_email
+    },
+    details: {
+      type: p.category || 'TOUR'
+    }
+  }));
+
+  return {
+    data: formattedData,
+    meta: {
+      total_count: total,
+      total_pages: Math.ceil(total / limit),
+      current_page: Number(page)
+    }
+  };
+}
+
+async function get_agent_product_detail_admin(product_id) {
+  const sql = `
+    SELECT p.*, u.name as owner_name 
+    FROM products p 
+    JOIN users u ON p.owner_id = u.id 
+    WHERE p.id = ?
+  `;
+  const [rows] = await db.query(sql, [product_id]);
+  return rows[0] || null;
 }
 
 /**
@@ -397,4 +548,9 @@ module.exports = {
   list_agent_users_with_verification,
   get_agent_dashboard_stats,
   get_agent_weekly_sales,
+  list_customer_users,
+  list_agent_products_admin,
+  get_agent_product_detail_admin,
+  get_dashboard_summary, 
+  list_all_bookings_admin,
 };

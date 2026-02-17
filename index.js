@@ -90,7 +90,7 @@ app.use('/api', (_, res, next) => {
 console.log("Checking routerNav...");
 
 // Mount Main Router
-app.use('/', routerNav);
+app.use('/api/v1', routerNav);
 
 app.use((req, res) => {
     console.log(`[REJECTED] 404 pada: ${req.method} ${req.url}`);

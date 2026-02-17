@@ -1,154 +1,26 @@
-const misc = require('../helpers/response');
-const { update_verification_status } = require('../models/user');
-const { update_agent_verification_status } = require('../models/agent');
-const {
-  list_agent_users,
-  list_customer_users,
-  list_agent_products_admin,
-  get_agent_product_detail_admin,
-  get_dashboard_summary,
-} = require('../models/admin');
+const PaymentSetting = require('../models/payment_setting');
 
-function normalize_verification_action(action) {
-  const upper = String(action || '').toUpperCase();
-  if (upper === 'APPROVE') return 'VERIFIED';
-  if (upper === 'REJECT') return 'REJECTED';
-  return null;
-}
-
-function ensure_admin(req) {
-  const user = req?.session?.user || null;
-
-  if (!user) {
-    const err = new Error('Unauthorized');
-    err.status_code = 401;
-    throw err;
-  }
-
-  if (user.role !== 'ADMIN') {
-    const err = new Error('Forbidden');
-    err.status_code = 403;
-    throw err;
-  }
-
-  return user;
-}
-
-async function list_agents(req, res) {
+const updatePaymentSettings = async (req, res) => {
   try {
-    ensure_admin(req);
-    const data = await list_agent_users();
-    return misc.response(res, 200, false, 'OK', data);
-  } catch (err) {
-    console.error(err);
-    return misc.response(res, err.status_code || 500, true, err.message || 'Internal server error');
+    const { selectedGateway, isTestMode, xendit, midtrans } = req.body;
+
+    const payload = {
+      selected_gateway: selectedGateway,
+      is_test_mode: isTestMode ? 1 : 0, // MySQL boolean biasanya 1/0
+      xendit_api_key: xendit.apiKey,
+      xendit_webhook_url: xendit.webhookUrl,
+      xendit_webhook_secret: xendit.webhookSecret,
+      xendit_payment_methods: xendit.paymentMethods, // Kirim aslinya saja
+      midtrans_server_key: midtrans.serverKey,
+      midtrans_client_key: midtrans.clientKey,
+      midtrans_webhook_url: midtrans.webhookUrl,
+      midtrans_payment_methods: midtrans.paymentMethods // Kirim aslinya saja
+    };
+
+    await PaymentSetting.upsert(payload);
+    res.json({ error: false, message: 'Settings updated successfully!' });
+  } catch (error) {
+    console.error("🔴 DATABASE ERROR:", error);
+    res.status(500).json({ error: true, message: error.message });
   }
-}
-
-async function list_customers(req, res) {
-  try {
-    ensure_admin(req);
-    const data = await list_customer_users();
-    return misc.response(res, 200, false, 'OK', data);
-  } catch (err) {
-    console.error(err);
-    return misc.response(res, err.status_code || 500, true, err.message || 'Internal server error');
-  }
-}
-
-async function list_agent_products(req, res) {
-  try {
-    ensure_admin(req);
-
-    const { owner_id, q, page, limit } = req.query;
-
-    const result = await list_agent_products_admin({
-      owner_id,
-      q,
-      page,
-      limit,
-    });
-
-    return misc.response(res, 200, false, 'OK', result);
-  } catch (e) {
-    console.error(e);
-    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
-  }
-}
-
-async function get_agent_product_detail(req, res) {
-  try {
-    ensure_admin(req);
-
-    const product_id = Number(req.params.product_id);
-    if (!Number.isFinite(product_id) || product_id <= 0) {
-      return misc.response(res, 400, true, 'product_id tidak valid');
-    }
-
-    const data = await get_agent_product_detail_admin(product_id);
-    if (!data) {
-      return misc.response(res, 404, true, 'Product not found');
-    }
-
-    return misc.response(res, 200, false, 'OK', data);
-  } catch (e) {
-    console.error(e);
-    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
-  }
-}
-
-async function update_agent_verification(req, res) {
-  try {
-    ensure_admin(req);
-
-    const user_id = req.params.user_id;
-    const { action } = req.body || {};
-
-    const new_status = normalize_verification_action(action);
-    if (!new_status) {
-      return misc.response(res, 400, true, 'action harus APPROVE atau REJECT');
-    }
-
-    await update_verification_status(user_id, new_status);
-    await update_agent_verification_status(user_id, new_status);
-
-    return misc.response(res, 200, false, `Agent verification ${new_status}`);
-  } catch (e) {
-    console.error(e);
-    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
-  }
-}
-
-/**
- * UPDATED: Dashboard summary dengan support filter range
- * Query parameter: range ('7days', 'month', 'year')
- * Example: GET /api/v1/admin/dashboard/summary?range=month
- */
-async function dashboard_summary(req, res) {
-  try {
-    ensure_admin(req);
-
-    // Ambil parameter range dari query string
-    const { range } = req.query;
-    
-    // Validasi range (opsional, model akan default ke '7days')
-    const validRanges = ['7days', 'month', 'year'];
-    const selectedRange = validRanges.includes(range) ? range : '7days';
-
-    const summary = await get_dashboard_summary({ range: selectedRange });
-
-    return misc.response(res, 200, false, 'OK', summary);
-  } catch (e) {
-    console.error(e);
-    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
-  }
-}
-
-module.exports = {
-  list_agents,
-  list_customers,
-  list_agent_products,
-  get_agent_product_detail,
-  update_agent_verification,
-  dashboard_summary,
 };
