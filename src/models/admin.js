@@ -216,7 +216,6 @@ async function set_agent_verification_decision({
 }
 
 async function get_dashboard_summary({ range = 'all' }) {
-  // 1. Tentukan jumlah hari berdasarkan range
   const ranges = {
     '7days': 7,
     'month': 30,
@@ -225,8 +224,8 @@ async function get_dashboard_summary({ range = 'all' }) {
 
   const days = ranges[range];
 
-  // 2. Buat filter SQL. Jika range adalah 'all' (days undefined), maka filter kosong.
-  // PENTING: Gunakan WHERE 1=1 agar kita bisa menambah AND di belakangnya dengan aman.
+  // Jika days ada (7, 30, 365), gunakan filter. 
+  // Jika tidak ada (kasus 'all'), biarkan string kosong agar mengambil semua data.
   const bookingDateFilter = days 
     ? `AND created_at >= DATE_SUB(NOW(), INTERVAL ${days} DAY)` 
     : "";
@@ -237,7 +236,7 @@ async function get_dashboard_summary({ range = 'all' }) {
 
   const sql = `
     SELECT 
-      -- Revenue & Booking Stats
+      -- Revenue & Booking Stats (Total Keseluruhan jika filter kosong)
       (SELECT COALESCE(SUM(total_price), 0) FROM bookings WHERE status = 'COMPLETED' ${bookingDateFilter}) as total_revenue,
       (SELECT COUNT(*) FROM bookings WHERE 1=1 ${bookingDateFilter}) as total_bookings,
       (SELECT COUNT(*) FROM bookings WHERE status = 'COMPLETED' ${bookingDateFilter}) as completed_bookings,
