@@ -8,7 +8,6 @@
     "start": "nodemon app",
     "seed:user": "node seeders/userSeeder.js",
     "seed:product": "node seeders/productSeeder.js",
-    
     "_comment_knex_migrations": "===== Knex Migration Scripts =====",
     "migrate": "knex migrate:latest --knexfile knexfile.js",
     "migrate:make": "knex migrate:make --knexfile knexfile.js",
@@ -20,11 +19,9 @@
     "migrate:list": "knex migrate:list --knexfile knexfile.js",
     "migrate:unlock": "knex migrate:unlock --knexfile knexfile.js",
     "migrate:version": "knex migrate:currentVersion --knexfile knexfile.js",
-    
     "_comment_knex_seeds": "===== Knex Seed Scripts =====",
     "seed:knex": "knex seed:run --knexfile knexfile.js",
     "seed:knex:make": "knex seed:make --knexfile knexfile.js",
-    
     "_comment_database": "===== Database Management Scripts =====",
     "db:setup": "npm run migrate && npm run seed:knex",
     "db:reset": "npm run migrate:rollback:all && npm run migrate && npm run seed:knex",
@@ -34,6 +31,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "body-parser": "^1.20.2",
     "compression": "^1.7.4",

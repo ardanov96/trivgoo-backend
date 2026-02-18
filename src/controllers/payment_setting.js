@@ -18,22 +18,31 @@ const updatePaymentSettings = async (req, res) => {
       midtrans_payment_methods: midtrans?.paymentMethods || []
     };
 
-    console.log("⚙️ Payload siap, memanggil Model Upsert...");
     await PaymentSetting.upsert(payload);
-    
-    console.log("✅ Berhasil menyimpan ke DB");
     res.json({ error: false, message: 'Settings updated successfully!' });
   } catch (error) {
     console.error("🔴 CONTROLLER ERROR:", error);
-    res.status(500).json({ 
-      error: true, 
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined 
+    res.status(500).json({ error: true, message: error.message });
+  }
+};
+
+const getPaymentSettings = async (req, res) => {
+  console.log("📥 Masuk ke Controller getPaymentSettings");
+  try {
+    const settings = await PaymentSetting.get();
+    
+    // Kirim respon balik ke frontend!
+    res.json({ 
+      error: false, 
+      data: settings || {} // Kirim objek kosong jika data belum ada di DB
     });
+  } catch (error) {
+    console.error("🔴 CONTROLLER ERROR:", error);
+    res.status(500).json({ error: true, message: error.message });
   }
 };
 
 module.exports = { 
   updatePaymentSettings,
-  getPaymentSettings: async (req, res) => { /* ... logikanya sama ... */ } 
+  getPaymentSettings 
 };

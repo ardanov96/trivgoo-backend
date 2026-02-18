@@ -2,6 +2,7 @@ const express = require('express');
 const Route = express.Router();
 const agent = require('../controllers/agent');
 const agentProduct = require('../controllers/agent_product');
+const userController = require('../controllers/user');
 
 const { requireAuth } = require('../middleware/auth');
 
@@ -26,5 +27,8 @@ Route.post('/products/:id/images', requireAuth, agentProduct.add_my_product_imag
 Route.put('/products/:id/images/reorder', requireAuth, agentProduct.reorder_my_product_images);
 Route.put('/products/:id/images/:image_id', requireAuth, agentProduct.update_my_product_image);
 Route.delete('/products/:id/images/:image_id', requireAuth, agentProduct.delete_my_product_image);
+
+// USER PROFILE ROUTES
+Route.put('/profile/update', requireAuth, userController.update_my_profile);
 
 module.exports = Route;

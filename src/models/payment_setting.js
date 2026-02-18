@@ -3,12 +3,25 @@ const db = require('../configs/db');
 const PaymentSetting = {
   get: async () => {
     try {
-      // Hilangkan destructuring [rows] untuk sementara agar lebih aman
-      const result = await db.query('SELECT * FROM payment_settings LIMIT 1');
+      const [rows] = await db.query('SELECT * FROM payment_settings LIMIT 1');
       
-      // mysql2/promise mengembalikan [rows, fields]. Kita ambil index 0.
-      const rows = Array.isArray(result) ? result[0] : [];
-      return rows.length > 0 ? rows[0] : null;
+      if (Array.isArray(rows) && rows.length > 0) {
+        const data = rows[0];
+        
+        // Parsing JSON string kembali ke Object agar Frontend tidak error
+        try {
+          data.xendit_payment_methods = typeof data.xendit_payment_methods === 'string' 
+            ? JSON.parse(data.xendit_payment_methods) : data.xendit_payment_methods;
+          data.midtrans_payment_methods = typeof data.midtrans_payment_methods === 'string' 
+            ? JSON.parse(data.midtrans_payment_methods) : data.midtrans_payment_methods;
+        } catch (e) {
+          data.xendit_payment_methods = [];
+          data.midtrans_payment_methods = [];
+        }
+        
+        return data;
+      }
+      return null;
     } catch (err) {
       console.error("❌ ERROR DI MODEL GET:", err.message);
       throw err;
