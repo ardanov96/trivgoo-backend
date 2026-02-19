@@ -8,7 +8,7 @@ const agent = require("./routes/agent");
 const admin = require("./routes/admin");
 const media = require("./routes/media");
 
-Route.use("/public", public);
+Route.use("/", public);
 Route.use("/auth", auth);
 Route.use("/agent", agent);
 Route.use("/admin", admin);
