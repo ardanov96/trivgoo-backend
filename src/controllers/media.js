@@ -1,61 +1,48 @@
 const misc = require('../helpers/response');
 
-function ensure_auth(req) {
-  const user = req?.session?.user || null;
-  if (!user) {
-    const err = new Error('Unauthorized');
-    err.status_code = 401;
-    throw err;
-  }
-  return user;
-}
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
-function to_public_url(req, public_path) {
-  const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
-
-  return `${base}${public_path}`;
+// Helper: ubah path file fisik → URL publik
+function to_public_url(file_path) {
+  // "public/products/tour/123.jpg" → "/products/tour/123.jpg"
+  const normalized = file_path.replace(/\\/g, '/');
+  const relative = normalized.replace(/^public\//, '');
+  return `${BASE_URL}/${relative}`;
 }
 
 async function upload_media(req, res) {
   try {
-    ensure_auth(req);
+    const single = req.files?.file?.[0] || null;
+    const multiple = req.files?.files || [];
 
-    const file = req.files?.file?.[0] || null;
-    const files = req.files?.files || [];
-
-    const picked = [];
-    if (file) picked.push(file);
-    if (Array.isArray(files) && files.length > 0) picked.push(...files);
-
-    if (!picked.length) {
-      return misc.response(res, 400, true, 'File tidak ditemukan (field: file atau files)');
+    // Tidak ada file sama sekali
+    if (!single && multiple.length === 0) {
+      return misc.response(res, 400, true, 'Tidak ada file yang diupload');
     }
 
-    const items = picked.map((f) => {
-      const public_path = `/uploads/${f.filename}`;
-      const url = to_public_url(req, public_path);
+    // Response untuk single file (cover image)
+    if (single && multiple.length === 0) {
+      return misc.response(res, 200, false, 'Upload berhasil', {
+        url: to_public_url(single.path),
+      });
+    }
 
-      return {
-        path: public_path,
-        url,
-        file_name: f.originalname,
-        stored_name: f.filename,
-        mime: f.mimetype,
-        size: f.size,
-      };
+    // Response untuk multiple files (gallery)
+    if (multiple.length > 0 && !single) {
+      const urls = multiple.map((f) => to_public_url(f.path));
+      return misc.response(res, 200, false, 'Upload berhasil', { urls });
+    }
+
+    // Keduanya ada sekaligus
+    return misc.response(res, 200, false, 'Upload berhasil', {
+      url: to_public_url(single.path),
+      urls: multiple.map((f) => to_public_url(f.path)),
     });
 
-    return misc.response(res, 200, false, 'OK', {
-      path: items[0].path,
-      url: items[0].url,
-      items,
-    });
-  } catch (e) {
-    console.error(e);
-    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
+  } catch (err) {
+    console.error(err);
+    return misc.response(res, 500, true, err.message || 'Upload gagal');
   }
 }
 
-module.exports = {
-  upload_media,
-};
+module.exports = { upload_media };
