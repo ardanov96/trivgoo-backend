@@ -11,7 +11,7 @@ const {
 
 const { update_verification_status } = require('../models/user');
 
-const UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads', 'agent_docs');
+const BASE_UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads', 'user', 'agent');
 const ALLOWED_EXTS = new Set(['.jpg', '.jpeg', '.png', '.pdf']);
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 

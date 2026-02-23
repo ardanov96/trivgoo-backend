@@ -81,7 +81,16 @@ app.use(getSessionMiddleware());
 console.log("--- [BOOT] Registering Routes Sync ---");
 
 // Static files & API No-Cache
-app.use(express.static('public'));
+const path = require('path');
+
+// Static umum
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Static khusus product images per specialization
+app.use('/products/tour',      express.static(path.join(__dirname, 'public/products/tour')));
+app.use('/products/stay',      express.static(path.join(__dirname, 'public/products/stay')));
+app.use('/products/transport', express.static(path.join(__dirname, 'public/products/transport')));
+
 app.use('/api', (_, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();

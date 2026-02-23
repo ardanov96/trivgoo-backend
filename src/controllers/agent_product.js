@@ -297,7 +297,7 @@ async function update_my_product_image(req, res) {
 
     const payload = {};
     if (typeof req.body?.image_url !== "undefined")
-      payload.image_url = req.body.image_url;
+      payload.image_url = normalize_image_path(req.body.image_url);
     if (typeof req.body?.sort_order !== "undefined")
       payload.sort_order = to_number_or_null(req.body.sort_order);
 

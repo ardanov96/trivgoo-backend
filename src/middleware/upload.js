@@ -1,61 +1,50 @@
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const conn = require('../configs/db');
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 
-async function get_user_specialization(user_id) {
-  const [rows] = await conn.execute(
-    'SELECT specialization FROM users WHERE id = ? LIMIT 1',
-    [user_id]
-  );
-  return rows[0]?.specialization || null;
-}
+// Map specialization → subfolder di public/products/
+const SPECIALIZATION_DIR = {
+  TOUR:      "public/products/tour",
+  STAY:      "public/products/stay",
+  TRANSPORT: "public/products/transport",
+};
 
-function resolve_upload_folder(specialization) {
-  const map = {
-    TOUR:      'public/products/tour',
-    STAY:      'public/products/stay',
-    TRANSPORT: 'public/products/transport',
-  };
-  return map[specialization] || 'public/uploads/other';
-}
+const { getAgentDocumentFolder } = require('../utils/agent_document');
+
+const FALLBACK_DIR = "public/uploads/general";
 
 const storage = multer.diskStorage({
-  destination: async (req, file, cb) => {
-    try {
-      const user = req?.session?.user;
-      if (!user?.id) return cb(new Error('Unauthorized'), null);
+  destination: (req, file, cb) => {
 
-      const specialization = await get_user_specialization(user.id);
-      const folder = resolve_upload_folder(specialization);
+    // Kalau ini upload agent document
+    if (req.body?.upload_type === 'AGENT_DOCUMENT') {
 
-      fs.mkdirSync(folder, { recursive: true });
-      cb(null, folder);
-    } catch (err) {
-      cb(err, null);
+      const agentType = req.body.agent_type;
+      const dir = getAgentDocumentFolder(agentType);
+
+      fs.mkdirSync(dir, { recursive: true });
+      return cb(null, dir);
     }
-  },
 
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-    cb(null, `${unique}${ext}`);
+    // Kalau upload product
+    const specialization = req.session?.user?.specialization || null;
+    const dir = SPECIALIZATION_DIR[specialization] || FALLBACK_DIR;
+
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
   },
 });
-
-const file_filter = (req, file, cb) => {
-  const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-  if (allowed.includes(file.mimetype)) {
-    cb(null, true);
-  } else {
-    cb(new Error('Format file tidak didukung. Gunakan JPG, PNG, WEBP, atau GIF.'), false);
-  }
-};
 
 const upload = multer({
   storage,
-  fileFilter: file_filter,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+  fileFilter: (req, file, cb) => {
+    const allowed = /jpeg|jpg|png|webp|gif/;
+    const ok =
+      allowed.test(path.extname(file.originalname).toLowerCase()) &&
+      allowed.test(file.mimetype);
+    ok ? cb(null, true) : cb(new Error("File type not allowed"));
+  },
 });
 
-module.exports = { upload, resolve_upload_folder, get_user_specialization };
+module.exports = { upload };

@@ -1,6 +1,6 @@
 const express = require('express');
 const Route = express.Router();
-const productModel = require('../models/product'); 
+const productModel = require('../models/product');
 
 
 // Route ini untuk halaman Explore (Tanpa requireAuth)
