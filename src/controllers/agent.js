@@ -11,16 +11,6 @@ const {
 
 const { update_verification_status } = require('../models/user');
 
-const BASE_UPLOAD_DIR = path.join(__dirname, '..', 'public', 'uploads', 'user', 'agent');
-const ALLOWED_EXTS = new Set(['.jpg', '.jpeg', '.png', '.pdf']);
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
-
-function ensure_upload_dir() {
-  if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-  }
-}
-
 function normalize_agent_type(agent_type) {
   const allowed = new Set(['INDIVIDUAL', 'CORPORATE']);
   const upper = String(agent_type || 'INDIVIDUAL').toUpperCase();
@@ -47,18 +37,21 @@ module.exports = {
         bank_name,
         bank_account_number,
         bank_account_holder,
-        id_document_url,
         specialization,
       } = req.body;
 
-      if (
-        !id_card_number ||
-        !tax_id ||
-        !bank_name ||
-        !bank_account_number ||
-        !bank_account_holder
-      ) {
+      if (!id_card_number || !tax_id || !bank_name || !bank_account_number || !bank_account_holder) {
         return misc.response(res, 400, true, 'Semua field wajib diisi');
+      }
+
+      // ✅ Read file path from multer (req.file), fallback to null if no file uploaded
+      const id_document_url = req.file
+      ? '/' + req.file.path.replace(/\\/g, '/').replace(/^public\//, '')
+      // public/users/corporate/42_NIB.pdf → /users/corporate/42_NIB.pdf
+      : null;
+
+      if (!id_document_url) {
+        return misc.response(res, 400, true, 'Document upload is required');
       }
 
       const norm_agent_type = normalize_agent_type(agent_type);
@@ -74,7 +67,7 @@ module.exports = {
         bank_name,
         bank_account_number,
         bank_account_holder,
-        id_document_url,
+        id_document_url,  // ✅ now comes from req.file, not req.body
       };
 
       await upsert_agent_verification(payload);

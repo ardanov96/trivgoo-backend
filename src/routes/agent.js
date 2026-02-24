@@ -5,9 +5,10 @@ const agentProduct = require('../controllers/agent_product');
 const userController = require('../controllers/user');
 
 const { requireAuth } = require('../middleware/auth');
+const { upload } = require('../middleware/upload'); 
 
 // VERIFICATION ROUTES
-Route.post('/verification', requireAuth, agent.submit_verification);
+Route.post('/verification', requireAuth, upload.single('idDocument'), agent.submit_verification);
 Route.get('/verification', requireAuth, agent.get_my_verification);
 
 // DASHBOARD ROUTES (NEW)
