@@ -47,7 +47,6 @@ module.exports = {
       // ✅ Read file path from multer (req.file), fallback to null if no file uploaded
       const id_document_url = req.file
       ? '/' + req.file.path.replace(/\\/g, '/').replace(/^public\//, '')
-      // public/users/corporate/42_NIB.pdf → /users/corporate/42_NIB.pdf
       : null;
 
       if (!id_document_url) {

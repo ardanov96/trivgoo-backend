@@ -10,7 +10,10 @@ async function seedCategories() {
     const categories = [
       { id: 1, name: 'Tour', slug: 'tour', description: 'Tour and activity services' },
       { id: 2, name: 'Stay', slug: 'stay', description: 'Hotels and Accommodations' },
-      { id: 3, name: 'Transport', slug: 'transport', description: 'Car rentals and transfers' }
+      { id: 3, name: 'Transport', slug: 'transport', description: 'Car rentals and transfers' },
+      { id: 4, name: 'Airport Pickup', slug: 'airport-pickup', description: 'Car rentals for airpot pickup' },
+      { id: 5, name: 'Event', slug: 'event', description: 'Events and Shows' },
+
     ];
 
     const sql = `

@@ -12,14 +12,17 @@ async function query(sql, params = []) {
 
 function resolve_image_url(path) {
   if (!path) return null;
-  if (path.startsWith("http")) return path;
+
+  if (path.startsWith('http://') || path.startsWith('https://')) return path;
 
   const BASE_URL =
     process.env.BASE_URL ||
     process.env.API_URL_DEV ||
-    "http://localhost:4000";
+    'http://localhost:4000';
 
-  return `${BASE_URL}/${path}`;
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+  return `${BASE_URL}${cleanPath}`;
 }
 
 function safe_parse_json(value, fallback) {
