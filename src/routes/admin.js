@@ -16,6 +16,10 @@ Route.get('/agents/products/:product_id', admin.get_agent_product_detail);
 Route.get('/bookings', bookingController.getAllBookings);
 Route.patch('/bookings/:id/status', bookingController.updateBookingStatus);
 Route.get('/dashboard/summary', admin.dashboard_summary);
+
+// Recovery endpoint for corporate user documents
+Route.post('/recovery/corporate-documents', admin.recover_corporate_documents);
+
 Route.use('/payment-settings', paymentSettingRoutes);
 
 module.exports = Route;

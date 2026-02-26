@@ -31,10 +31,15 @@ const MIME_TO_EXT = {
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    // Kalau ini upload agent document
-    if (req.body?.upload_type === 'AGENT_DOCUMENT') {
-      const agentType = String(req.body.agent_type || '').toUpperCase();
-      const dir = AGENT_DOCUMENT_DIR[agentType] || AGENT_DOCUMENT_DIR.INDIVIDUAL;
+    // Kalau ini upload agent document (khusus verification)
+    const uploadType = String(req.body?.upload_type || '').toUpperCase();
+    const agentType = String(req.body?.agent_type || '').toUpperCase();
+    
+    if (uploadType === 'AGENT_DOCUMENT') {
+      // Ensure agent_type is one of the valid values
+      const validAgentType = ['CORPORATE', 'INDIVIDUAL'].includes(agentType) ? agentType : 'INDIVIDUAL';
+      const dir = AGENT_DOCUMENT_DIR[validAgentType];
+      console.log(`[UPLOAD] Agent Document: type=${validAgentType}, saving to ${dir}`);
       fs.mkdirSync(dir, { recursive: true });
       return cb(null, dir);
     }
@@ -42,6 +47,7 @@ const storage = multer.diskStorage({
     // Kalau upload product
     const specialization = req.session?.user?.specialization || null;
     const dir = SPECIALIZATION_DIR[specialization] || FALLBACK_DIR;
+    console.log(`[UPLOAD] Product: specialization=${specialization}, saving to ${dir}`);
     fs.mkdirSync(dir, { recursive: true });
     cb(null, dir);
   },

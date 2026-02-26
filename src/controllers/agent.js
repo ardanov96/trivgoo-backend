@@ -45,9 +45,21 @@ module.exports = {
       }
 
       // ✅ Read file path from multer (req.file), fallback to null if no file uploaded
-      const id_document_url = req.file
-      ? '/' + req.file.path.replace(/\\/g, '/').replace(/^public\//, '')
-      : null;
+      let id_document_url = null;
+      if (req.file) {
+        // Normalize path: convert backslashes to forward slashes
+        const normalizedPath = req.file.path.replace(/\\/g, '/');
+        console.log(`[AGENT] File uploaded to: ${req.file.path}`);
+        console.log(`[AGENT] Normalized path: ${normalizedPath}`);
+        
+        // Remove public/ prefix if present
+        let cleanPath = normalizedPath.replace(/^public\//, '');
+        console.log(`[AGENT] After removing public/: ${cleanPath}`);
+        
+        // Ensure leading slash
+        id_document_url = cleanPath.startsWith('/') ? cleanPath : '/' + cleanPath;
+        console.log(`[AGENT] Final document URL: ${id_document_url}`);
+      }
 
       if (!id_document_url) {
         return misc.response(res, 400, true, 'Document upload is required');
