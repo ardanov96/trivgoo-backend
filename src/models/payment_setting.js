@@ -31,42 +31,47 @@ const PaymentSetting = {
   upsert: async (data) => {
     try {
       const existing = await PaymentSetting.get();
-      
-      // Konversi JSON ke String untuk MySQL
       const xenditMethods = JSON.stringify(data.xendit_payment_methods || []);
       const midtransMethods = JSON.stringify(data.midtrans_payment_methods || []);
       
       if (existing) {
         const sql = `
           UPDATE payment_settings SET 
-            selected_gateway = ?, is_test_mode = ?, 
-            xendit_api_key = ?, xendit_webhook_url = ?, xendit_webhook_secret = ?, xendit_payment_methods = ?, 
-            midtrans_server_key = ?, midtrans_client_key = ?, midtrans_webhook_url = ?, midtrans_payment_methods = ?, 
+            selected_gateway = ?,         -- 1
+            is_test_mode = ?,             -- 2
+            midtrans_merchant_id = ?,     -- 3
+            xendit_secret_key = ?,        -- 4
+            xendit_webhook_url = ?,       -- 5
+            xendit_webhook_secret = ?,    -- 6
+            xendit_payment_methods = ?,   -- 7
+            midtrans_server_key = ?,      -- 8
+            midtrans_client_key = ?,      -- 9
+            midtrans_webhook_url = ?,     
+            midtrans_payment_methods = ?, 
             updated_at = NOW() 
-          WHERE id = ?`;
-        
+          WHERE id = ?`;                  
+
+        // PASTIKAN ADA 12 DATA DALAM ARRAY INI
         const params = [
-          data.selected_gateway, data.is_test_mode,
-          data.xendit_api_key, data.xendit_webhook_url, data.xendit_webhook_secret, xenditMethods,
-          data.midtrans_server_key, data.midtrans_client_key, data.midtrans_webhook_url, midtransMethods,
-          existing.id
+          data.selected_gateway,      // 1
+          data.is_test_mode,          // 2
+          data.midtrans_merchant_id,  // 3
+          data.xendit_secret_key,        // 4
+          data.xendit_webhook_url,    // 5
+          data.xendit_webhook_secret, // 6
+          xenditMethods,              // 7
+          data.midtrans_server_key,   // 8
+          data.midtrans_client_key,   // 9
+          data.midtrans_webhook_url,  // 10
+          midtransMethods,            // 11
+          existing.id                 // 12 (untuk WHERE id = ?)
         ];
-        return await db.execute(sql, params);
+
+        return await db.query(sql, params);
       } else {
-        const sql = `
-          INSERT INTO payment_settings (
-            selected_gateway, is_test_mode, 
-            xendit_api_key, xendit_webhook_url, xendit_webhook_secret, xendit_payment_methods, 
-            midtrans_server_key, midtrans_client_key, midtrans_webhook_url, midtrans_payment_methods, 
-            is_active, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`;
-        
-        const params = [
-          data.selected_gateway, data.is_test_mode,
-          data.xendit_api_key, data.xendit_webhook_url, data.xendit_webhook_secret, xenditMethods,
-          data.midtrans_server_key, data.midtrans_client_key, data.midtrans_webhook_url, midtransMethods
-        ];
-        return await db.execute(sql, params);
+        // Logic INSERT jika data belum ada (opsional)
+        const sql = `INSERT INTO payment_settings SET ?`;
+        return await db.query(sql, data);
       }
     } catch (err) {
       console.error("❌ ERROR DI MODEL UPSERT:", err.message);
