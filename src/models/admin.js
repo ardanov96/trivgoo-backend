@@ -1,4 +1,5 @@
 const db = require('../configs/db');
+const { resolve_image_url } = require('./product');
 
 const AGENT_TYPES = new Set(['INDIVIDUAL', 'CORPORATE']);
 const SPECIALIZATIONS = new Set(['TOUR', 'STAY', 'TRANSPORT']);
@@ -407,20 +408,26 @@ async function list_agent_products_admin({ owner_id, q, page = 1, limit = 10 }) 
   const total = countResult[0].total;
 
   // Format data agar sesuai dengan kebutuhan Frontend (AdminProducts.tsx)
-  const formattedData = rows.map(p => ({
-    id: p.id,
-    name: p.name,
-    price: p.price,
-    currency: 'IDR', // atau p.currency jika ada di tabel
-    image_url: p.image_url || p.image,
-    owner: {
-      name: p.owner_name,
-      email: p.owner_email
-    },
-    details: {
-      type: p.category || 'TOUR'
-    }
-  }));
+  const formattedData = rows.map((p) => {
+    const rawImagePath = p.image_url || p.image || null;
+    const fullImage = resolve_image_url(rawImagePath);
+
+    return {
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      currency: p.currency || 'IDR',
+      image: fullImage,
+      image_url: fullImage,
+      owner: {
+        name: p.owner_name,
+        email: p.owner_email,
+      },
+      details: {
+        type: p.category || 'TOUR',
+      },
+    };
+  });
 
   return {
     data: formattedData,

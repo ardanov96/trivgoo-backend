@@ -687,4 +687,5 @@ module.exports = {
   reorder_product_images_for_owner,
   list_all_products,
   get_product_by_id,
+  resolve_image_url,
 };
