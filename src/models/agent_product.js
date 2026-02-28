@@ -77,7 +77,6 @@ async function build_product_response(row) {
     id:             row.id,
     owner_id:       row.owner_id,
     category_id:    row.category_id,
-    car_id:         row.car_id || null,
     name:           row.name,
     description:    row.description,
     price:          Number(row.price),
@@ -125,8 +124,8 @@ async function create_product(payload) {
     `
       INSERT INTO products (
         owner_id, category_id, name, description, price, currency,
-        location, image_url, features, details, daily_capacity, car_id
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        location, image_url, features, details, daily_capacity
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
     `,
     [
       payload.owner_id,
@@ -140,7 +139,6 @@ async function create_product(payload) {
       payload.features ? JSON.stringify(payload.features) : null,
       payload.details  ? JSON.stringify(payload.details)  : null,
       payload.daily_capacity || 10,
-      payload.car_id || null,
     ],
   );
 
@@ -191,7 +189,6 @@ async function update_product(product_id, owner_id, payload) {
         features       = ?,
         details        = ?,
         daily_capacity = ?,
-        car_id         = ?,
         updated_at     = CURRENT_TIMESTAMP
       WHERE id = ? AND owner_id = ?
     `,
@@ -206,7 +203,6 @@ async function update_product(product_id, owner_id, payload) {
       payload.features ? JSON.stringify(payload.features) : null,
       payload.details  ? JSON.stringify(payload.details)  : null,
       payload.daily_capacity || 10,
-      payload.car_id || null,
       product_id,
       owner_id,
     ],
