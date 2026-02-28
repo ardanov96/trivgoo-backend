@@ -109,6 +109,7 @@ async function create_my_product(req, res) {
       blocked_dates,
       lat,
       lng,
+      car_id
     } = req.body;
 
     if (
@@ -178,6 +179,7 @@ async function update_my_product(req, res) {
       blocked_dates: req.body?.blocked_dates,
       lat: req.body.lat,
       lng: req.body.lng,
+      car_id: req.body?.car_id ? Number(req.body.car_id) : null,
     };
 
     const product = await update_product(product_id, user.id, payload);
