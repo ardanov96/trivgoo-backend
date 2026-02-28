@@ -31,51 +31,35 @@ const PaymentSetting = {
   upsert: async (data) => {
     try {
       const existing = await PaymentSetting.get();
+      
+      // 1. Pastikan Methods menjadi String JSON
       const xenditMethods = JSON.stringify(data.xendit_payment_methods || []);
       const midtransMethods = JSON.stringify(data.midtrans_payment_methods || []);
       
+      // 2. Buat objek data yang bersih (nama key harus sesuai nama kolom di DB)
+      const payload = {
+        selected_gateway: data.selected_gateway,
+        is_test_mode: data.is_test_mode ? 1 : 0,
+        midtrans_merchant_id: data.midtrans_merchant_id,
+        midtrans_server_key: data.midtrans_server_key,
+        midtrans_client_key: data.midtrans_client_key,
+        midtrans_webhook_url: data.midtrans_webhook_url,
+        midtrans_payment_methods: midtransMethods,
+        xendit_secret_key: data.xendit_secret_key,
+        xendit_webhook_url: data.xendit_webhook_url,
+        xendit_webhook_secret: data.xendit_webhook_secret,
+        xendit_payment_methods: xenditMethods,
+        updated_at: new Date()
+      };
+
       if (existing) {
-        const sql = `
-          UPDATE payment_settings SET 
-            selected_gateway = ?,         -- 1
-            is_test_mode = ?,             -- 2
-            midtrans_merchant_id = ?,     -- 3
-            xendit_secret_key = ?,        -- 4
-            xendit_webhook_url = ?,       -- 5
-            xendit_webhook_secret = ?,    -- 6
-            xendit_payment_methods = ?,   -- 7
-            midtrans_server_key = ?,      -- 8
-            midtrans_client_key = ?,      -- 9
-            midtrans_webhook_url = ?,     
-            midtrans_payment_methods = ?, 
-            updated_at = NOW() 
-          WHERE id = ?`;                  
-
-        // PASTIKAN ADA 12 DATA DALAM ARRAY INI
-        const params = [
-          data.selected_gateway,      // 1
-          data.is_test_mode,          // 2
-          data.midtrans_merchant_id,  // 3
-          data.xendit_secret_key,        // 4
-          data.xendit_webhook_url,    // 5
-          data.xendit_webhook_secret, // 6
-          xenditMethods,              // 7
-          data.midtrans_server_key,   // 8
-          data.midtrans_client_key,   // 9
-          data.midtrans_webhook_url,  // 10
-          midtransMethods,            // 11
-          existing.id                 // 12 (untuk WHERE id = ?)
-        ];
-
-        return await db.query(sql, params);
+        // UPDATE menggunakan format SET ?
+        const sql = `UPDATE payment_settings SET ? WHERE id = ?`;
+        return await db.query(sql, [payload, existing.id]);
       } else {
-        const insertData = {
-          ...data,
-          xendit_payment_methods: xenditMethods,   // Pakai string JSON
-          midtrans_payment_methods: midtransMethods // Pakai string JSON
-        };
+        // INSERT menggunakan format SET ?
         const sql = `INSERT INTO payment_settings SET ?`;
-        return await db.query(sql, insertData);
+        return await db.query(sql, payload);
       }
     } catch (err) {
       console.error("❌ ERROR DI MODEL UPSERT:", err.message);
