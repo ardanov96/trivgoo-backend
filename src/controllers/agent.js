@@ -108,7 +108,7 @@ module.exports = {
    * NEW: Get agent dashboard statistics
    * GET /api/v1/agent/dashboard/stats
    */
-  get_agent_dashboard_stats: async (req, res) => {
+  get_dashboard_stats: async (req, res) => {
     try {
       const user_id = req.session?.user?.id;
       if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
