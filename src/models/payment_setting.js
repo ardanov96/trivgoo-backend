@@ -69,9 +69,13 @@ const PaymentSetting = {
 
         return await db.query(sql, params);
       } else {
-        // Logic INSERT jika data belum ada (opsional)
+        const insertData = {
+          ...data,
+          xendit_payment_methods: xenditMethods,   // Pakai string JSON
+          midtrans_payment_methods: midtransMethods // Pakai string JSON
+        };
         const sql = `INSERT INTO payment_settings SET ?`;
-        return await db.query(sql, data);
+        return await db.query(sql, insertData);
       }
     } catch (err) {
       console.error("❌ ERROR DI MODEL UPSERT:", err.message);
