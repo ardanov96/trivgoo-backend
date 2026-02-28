@@ -32,11 +32,11 @@ const PaymentSetting = {
     try {
       const existing = await PaymentSetting.get();
       
-      // 1. Pastikan Methods menjadi String JSON
+      // Pastikan data methods adalah string JSON
       const xenditMethods = JSON.stringify(data.xendit_payment_methods || []);
       const midtransMethods = JSON.stringify(data.midtrans_payment_methods || []);
       
-      // 2. Buat objek data yang bersih (nama key harus sesuai nama kolom di DB)
+      // Susun objek data sesuai kolom tabel
       const payload = {
         selected_gateway: data.selected_gateway,
         is_test_mode: data.is_test_mode ? 1 : 0,
@@ -53,13 +53,10 @@ const PaymentSetting = {
       };
 
       if (existing) {
-        // UPDATE menggunakan format SET ?
-        const sql = `UPDATE payment_settings SET ? WHERE id = ?`;
-        return await db.query(sql, [payload, existing.id]);
+        // UPDATE otomatis mencocokkan key objek dengan nama kolom
+        return await db.query("UPDATE payment_settings SET ? WHERE id = ?", [payload, existing.id]);
       } else {
-        // INSERT menggunakan format SET ?
-        const sql = `INSERT INTO payment_settings SET ?`;
-        return await db.query(sql, payload);
+        return await db.query("INSERT INTO payment_settings SET ?", [payload]);
       }
     } catch (err) {
       console.error("❌ ERROR DI MODEL UPSERT:", err.message);
