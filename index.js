@@ -25,6 +25,7 @@ const IS_PROD = NODE_ENV === 'production';
 const allowedOrigins = new Set([
   'http://localhost:3000',
   'http://localhost:5173',
+  'https://trivgoo.com',
   'https://dev.trivgoo.com',
   'http://dev.trivgoo.com',
   ...(process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean)
