@@ -22,6 +22,9 @@ Route.post('/products', requireAuth, agentProduct.create_my_product);
 Route.put('/products/:id', requireAuth, agentProduct.update_my_product);
 Route.delete('/products/:id/delete', requireAuth, agentProduct.delete_my_product);
 
+// allow agent to enable/disable own listing without removing it
+Route.put('/products/:id/status', requireAuth, agentProduct.update_my_product_status);
+
 // PRODUCT IMAGES ROUTES
 Route.get('/products/:id/images', requireAuth, agentProduct.list_my_product_images);
 Route.post('/products/:id/images', requireAuth, agentProduct.add_my_product_images);

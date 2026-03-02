@@ -656,6 +656,19 @@ async function reorder_product_images_for_owner(product_id, owner_id, order) {
   return { affected_rows: touched };
 }
 
+// ─── Function: update `is_active` flag for a product owned by specific user ──
+async function set_product_active_for_owner(product_id, owner_id, active) {
+  // reuse ownership guard
+  await ensure_owned_product(product_id, owner_id);
+
+  const res = await query(
+    `UPDATE products SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND owner_id = ?`,
+    [active ? 1 : 0, product_id, owner_id]
+  );
+
+  return { affected_rows: res.affectedRows || 0 };
+}
+
 // ─── Helper: pastikan product dimiliki owner ──────────────────────────────────
 async function ensure_owned_product(product_id, owner_id) {
   const row = await find_product_row_by_id(product_id);
@@ -688,4 +701,6 @@ module.exports = {
   list_all_products,
   get_product_by_id,
   resolve_image_url,
+  // new helper for toggling active status
+  set_product_active_for_owner,
 };

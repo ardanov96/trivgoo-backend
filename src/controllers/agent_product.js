@@ -9,6 +9,7 @@ const {
   list_product_images_for_owner,
   reorder_product_images_for_owner,
   delete_product_for_owner,
+  set_product_active_for_owner,
 } = require("../models/product");
 
 function get_session_user(req) {
@@ -224,6 +225,49 @@ async function delete_my_product(req, res) {
   }
 }
 
+// allow owners to toggle the `is_active` flag without deleting
+async function update_my_product_status(req, res) {
+  try {
+    const user = ensure_agent(req);
+    const product_id = Number.parseInt(req.params.id, 10);
+
+    if (!product_id) {
+      return misc.response(res, 400, true, "product_id tidak valid");
+    }
+
+    // expect boolean or numeric 0/1 in body
+    let { is_active } = req.body;
+    if (typeof is_active === "string") {
+      is_active = is_active === "1" || is_active === "true";
+    }
+    if (typeof is_active !== "boolean") {
+      return misc.response(res, 400, true, "is_active field wajib boolean");
+    }
+
+    const result = await set_product_active_for_owner(
+      product_id,
+      user.id,
+      is_active,
+    );
+
+    if (!result || !result.affected_rows) {
+      return misc.response(res, 404, true, "Product tidak ditemukan");
+    }
+
+    // return fresh copy of the product so front-end can update state easily
+    const updated = await get_product_by_id_for_owner(product_id, user.id);
+    return misc.response(res, 200, false, "Product status updated", updated);
+  } catch (e) {
+    console.error(e);
+    return misc.response(
+      res,
+      e.status_code || (e.code === "FORBIDDEN" ? 403 : 500),
+      true,
+      e.message || "Internal server error"
+    );
+  }
+}
+
 async function list_my_product_images(req, res) {
   try {
     const user = ensure_agent(req);
@@ -398,6 +442,7 @@ module.exports = {
   create_my_product,
   update_my_product,
   delete_my_product,
+  update_my_product_status,
 
   list_my_product_images,
   add_my_product_images,
