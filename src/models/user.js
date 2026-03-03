@@ -1,6 +1,7 @@
 const db = require("../configs/db");
 const knex = require('../configs/db');
 const bcrypt = require('bcrypt');
+const crypto = require('crypto');
 
 function to_int(v) {
   const n = Number(v);
@@ -134,6 +135,62 @@ async function verify_password(userId, plainPassword) {
   return await bcrypt.compare(plainPassword, rows[0].password_hash);
 }
 
+/**
+ * Simpan reset token ke DB (expires 1 jam)
+ */
+async function save_reset_token(user_id, token) {
+  const expires_at = new Date(Date.now() + 60 * 60 * 1000); // +1 jam
+
+  await db.query(
+    `INSERT INTO password_reset_tokens (user_id, token, expires_at)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       token      = VALUES(token),
+       expires_at = VALUES(expires_at),
+       used       = 0,
+       created_at = CURRENT_TIMESTAMP`,
+    [user_id, token, expires_at]
+  );
+}
+
+/**
+ * Cari token yang valid (belum expired & belum dipakai)
+ */
+async function find_valid_reset_token(token) {
+  const [rows] = await db.query(
+    `SELECT prt.*, u.email, u.name, u.role
+     FROM password_reset_tokens prt
+     JOIN users u ON u.id = prt.user_id
+     WHERE prt.token = ?
+       AND prt.expires_at > NOW()
+       AND prt.used = 0
+     LIMIT 1`,
+    [token]
+  );
+  return rows[0] || null;
+}
+
+/**
+ * Tandai token sebagai sudah dipakai
+ */
+async function mark_token_used(token) {
+  await db.query(
+    `UPDATE password_reset_tokens SET used = 1 WHERE token = ?`,
+    [token]
+  );
+}
+
+/**
+ * Ganti password user
+ */
+async function reset_password(user_id, new_password) {
+  const hashed = await bcrypt.hash(new_password, 10);
+  await db.query(
+    `UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [hashed, user_id]
+  );
+}
+
 module.exports = {
   find_user_by_email,
   find_user_by_id,
@@ -141,6 +198,10 @@ module.exports = {
   update_verification_status,
   update_user_profile,
   verify_password,
+  save_reset_token,
+  find_valid_reset_token,
+  mark_token_used,
+  reset_password,
 
   update_user: async (id, data) => {
     await knex('users').where({ id }).update(data);
