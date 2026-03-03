@@ -9,6 +9,7 @@ const admin = require("./routes/admin");
 const media = require("./routes/media");
 const cars = require("./routes/car");
 const cart = require("./routes/cart");
+const payment = require("./routes/payment");
 
 
 Route.use("/", publicRoutes);
@@ -18,5 +19,6 @@ Route.use("/admin", admin);
 Route.use("/media", media);
 Route.use("/cars", cars);
 Route.use("/cart", cart);
+Route.use("/payment", payment);
 
 module.exports = Route;
