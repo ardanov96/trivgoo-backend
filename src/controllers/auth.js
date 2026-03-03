@@ -5,6 +5,10 @@ const { find_user_by_email, create_user, find_user_by_id, update_user } = requir
 
 const { create_default_profile } = require('../models/profile');
 
+const crypto = require('crypto');
+const { send_reset_password_email } = require('../helpers/mailer');
+const db = require('../configs/db');
+
 require('dotenv').config();
 
 const ROLE_ALLOWED = new Set(['CUSTOMER', 'AGENT', 'ADMIN']);
@@ -224,4 +228,54 @@ module.exports = {
       return misc.response(res, 500, true, e.message || 'Internal server error');
     }
   },
+
+  forgot_password: async (req, res) => {
+    try {
+      const { email } = req.body;
+      const user = await find_user_by_email(email);
+
+      if (!user) {
+        // Demi keamanan, tetap beri respon sukses agar email tidak di-probe
+        return misc.response(res, 200, false, 'Jika email terdaftar, instruksi reset akan dikirim.');
+      }
+
+      const token = crypto.randomBytes(32).toString('hex');
+      const expires = new Date(Date.now() + 3600000); // 1 Jam
+
+      // Simpan ke tabel password_resets (Hapus yang lama jika ada)
+      await db('password_resets').where({ email }).del();
+      await db('password_resets').insert({ email, token, expires_at: expires });
+
+      await send_reset_password_email(user.email, user.name, token, user.role.toLowerCase());
+
+      return misc.response(res, 200, false, 'Email reset password telah dikirim');
+    } catch (e) {
+      return misc.response(res, 500, true, e.message);
+    }
+  },
+
+  reset_password: async (req, res) => {
+    try {
+      const { token, password } = req.body;
+
+      const resetRequest = await db('password_resets').where({ token }).first();
+      if (!resetRequest || new Date() > new Date(resetRequest.expires_at)) {
+        return misc.response(res, 400, true, 'Token tidak valid atau sudah kadaluwarsa');
+      }
+
+      const password_hash = await bcrypt.hash(password, 10);
+
+      await db('users').where({ email: resetRequest.email }).update({ 
+        password_hash, 
+        updated_at: new Date() 
+      });
+      
+      // Hapus token setelah digunakan
+      await db('password_resets').where({ email: resetRequest.email }).del();
+
+      return misc.response(res, 200, false, 'Password berhasil diperbarui. Silakan login.');
+    } catch (e) {
+      return misc.response(res, 500, true, e.message);
+    }
+  }
 };

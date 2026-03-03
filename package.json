@@ -50,7 +50,7 @@
     "morgan": "^1.10.0",
     "multer": "^2.0.2",
     "mysql2": "^3.16.2",
-    "nodemailer": "^7.0.11",
+    "nodemailer": "^7.0.13",
     "nodemon": "^2.0.4",
     "redis": "^5.10.0",
     "sanitize-filename": "^1.6.3",
