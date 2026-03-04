@@ -168,7 +168,7 @@ async function start() {
 
   try {
     console.log("[INIT] Checking Database Connection...");
-    await db.raw('SELECT 1');
+    await db('users').count('* as count').first();
     console.log("✅ Database Connected.");
   } catch (err) {
     console.error("❌ [DATABASE ERROR] Gagal konek DB saat startup:", err.message);
