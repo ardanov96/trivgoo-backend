@@ -67,8 +67,8 @@ function getSessionMiddleware(timeoutMins = 30) {
     rolling: true,
     cookie: {
       httpOnly: true,
-      sameSite: 'none', 
-      secure: true, // Paksa true karena dev.trivgoo.com pakai HTTPS
+      sameSite: 'lax', // Kembalikan ke lax sementara untuk tes localhost
+      secure: false,   // Set ke false agar localhost (HTTP) mau menerima cookie ini
       maxAge: timeoutMins * 60 * 1000
     }
   });
