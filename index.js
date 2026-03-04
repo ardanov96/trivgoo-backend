@@ -92,6 +92,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/products/tour',      express.static(path.join(__dirname, 'public/products/tour')));
 app.use('/products/stay',      express.static(path.join(__dirname, 'public/products/stay')));
 app.use('/products/transport', express.static(path.join(__dirname, 'public/products/transport')));
+app.use('/car-rental', express.static(path.join(__dirname, 'public/car-rental')));
 
 app.use('/api', (_, res, next) => {
   res.set('Cache-Control', 'no-store');

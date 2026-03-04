@@ -1,7 +1,7 @@
 const misc = require('../helpers/response');
 const { list_all_cars, get_car_by_id } = require('../models/car');
 
-const BASE_URL = process.env.BASE_URL || process.env.API_URL_DEV || 'http://localhost:4000'
+const BASE_URL = process.env.BASE_URL || process.env.API_URL_DEV || 'http://localhost'
 
 function format_car(car) {
   return {
