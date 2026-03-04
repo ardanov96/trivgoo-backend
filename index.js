@@ -25,6 +25,7 @@ const IS_PROD = NODE_ENV === 'production';
 const allowedOrigins = new Set([
   'http://localhost:3000',
   'http://localhost:5173',
+  'http://localhost',
   'https://trivgoo.com',
   'https://dev.trivgoo.com',
   'http://dev.trivgoo.com',
@@ -66,8 +67,8 @@ function getSessionMiddleware(timeoutMins = 30) {
     rolling: true,
     cookie: {
       httpOnly: true,
-      sameSite: process.env.COOKIE_SAMESITE || 'lax',
-      secure: IS_PROD,
+      sameSite: 'none', 
+      secure: true, // Paksa true karena dev.trivgoo.com pakai HTTPS
       maxAge: timeoutMins * 60 * 1000
     }
   });
