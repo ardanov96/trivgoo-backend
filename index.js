@@ -1,8 +1,10 @@
 /**
  * Optimized Express bootstrap - Fixed Lifecycle for Production/VPS
- * Fixed: MySQL session store, cookie config per-env, CORS hardened
+ * Fixed: MySQL session store, cookie config per-env, CORS hardened, dotenv per-env
  */
-require('dotenv').config();
+const dotenvFile = process.env.NODE_ENV === 'production' ? '.env' : '.env.development';
+require('dotenv').config({ path: dotenvFile });
+
 const express = require('express');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -22,6 +24,9 @@ const PORT = Number(process.env.PORT || 4000);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PROD = NODE_ENV === 'production';
 const IS_DEV = NODE_ENV === 'development';
+
+console.log(`[ENV] Loaded: ${dotenvFile}`);
+console.log(`[ENV] NODE_ENV=${NODE_ENV}, PORT=${PORT}, DB=${process.env.DB_NAME}`);
 
 // Explicit Allowed Origins
 const allowedOrigins = new Set([
@@ -63,13 +68,10 @@ app.use(cors({
 // --------------------
 const MySQLStore = require('express-mysql-session')(session);
 
-// Session store pakai MySQL agar persist across PM2 restarts & multiple processes
+// Gunakan pool dari db.js agar tidak buka koneksi baru terpisah
+const { pool } = require('./src/configs/db');
+
 const sessionStore = new MySQLStore({
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT) || 3306,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
   clearExpired: true,
   checkExpirationInterval: 900000, // Cleanup setiap 15 menit
   createDatabaseTable: true,       // Auto-buat tabel `sessions` jika belum ada
@@ -81,7 +83,7 @@ const sessionStore = new MySQLStore({
       data: 'data'
     }
   }
-});
+}, pool); // <- pass pool langsung, tidak perlu konfigurasi koneksi ulang
 
 sessionStore.on('error', (err) => {
   console.error('[SESSION STORE ERROR]', err.message);
@@ -97,8 +99,8 @@ function getSessionMiddleware(timeoutMins = 30) {
     store: sessionStore,
     cookie: {
       httpOnly: true,
-      // localhost (http)  → sameSite: 'lax',  secure: false
-      // dev.trivgoo.com (https) → sameSite: 'none', secure: true
+      // localhost (http)  -> sameSite: 'lax',  secure: false
+      // dev.trivgoo.com (https) -> sameSite: 'none', secure: true
       sameSite: IS_DEV ? 'lax' : 'none',
       secure: !IS_DEV,
       maxAge: timeoutMins * 60 * 1000
@@ -168,7 +170,7 @@ async function start() {
 
   try {
     console.log("[INIT] Checking Database Connection...");
-    await db('users').count('* as count').first();
+    await db.execute('SELECT 1'); // <- gunakan execute, sesuai export db.js
     console.log("✅ Database Connected.");
   } catch (err) {
     console.error("❌ [DATABASE ERROR] Gagal konek DB saat startup:", err.message);
