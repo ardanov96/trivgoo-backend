@@ -1,5 +1,6 @@
 /**
  * Optimized Express bootstrap - Fixed Lifecycle for Production/VPS
+ * Fixed: MySQL session store, cookie config per-env, CORS hardened
  */
 require('dotenv').config();
 const express = require('express');
@@ -20,6 +21,7 @@ const app = express();
 const PORT = Number(process.env.PORT || 4000);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const IS_PROD = NODE_ENV === 'production';
+const IS_DEV = NODE_ENV === 'development';
 
 // Explicit Allowed Origins
 const allowedOrigins = new Set([
@@ -46,8 +48,10 @@ app.use(cookieParser());
 // CORS Configuration
 app.use(cors({
   origin: (origin, cb) => {
+    // Allow server-to-server requests (no origin) & known origins
     if (!origin || allowedOrigins.has(origin)) return cb(null, true);
-    return cb(null, false);
+    console.warn(`[CORS BLOCKED] Origin: ${origin}`);
+    return cb(new Error(`CORS blocked: ${origin}`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -57,7 +61,32 @@ app.use(cors({
 // --------------------
 // 3. SESSION (Initialize before Routes)
 // --------------------
-// Kita buat fungsi pembungkus agar timeout bisa dinamis tanpa menghalangi boot rute
+const MySQLStore = require('express-mysql-session')(session);
+
+// Session store pakai MySQL agar persist across PM2 restarts & multiple processes
+const sessionStore = new MySQLStore({
+  host: process.env.DB_HOST || 'localhost',
+  port: Number(process.env.DB_PORT) || 3306,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  clearExpired: true,
+  checkExpirationInterval: 900000, // Cleanup setiap 15 menit
+  createDatabaseTable: true,       // Auto-buat tabel `sessions` jika belum ada
+  schema: {
+    tableName: 'sessions',
+    columnNames: {
+      session_id: 'session_id',
+      expires: 'expires',
+      data: 'data'
+    }
+  }
+});
+
+sessionStore.on('error', (err) => {
+  console.error('[SESSION STORE ERROR]', err.message);
+});
+
 function getSessionMiddleware(timeoutMins = 30) {
   return session({
     name: process.env.SESSION_NAME || 'sid',
@@ -65,24 +94,26 @@ function getSessionMiddleware(timeoutMins = 30) {
     resave: false,
     saveUninitialized: false,
     rolling: true,
+    store: sessionStore,
     cookie: {
       httpOnly: true,
-      sameSite: 'none', // WAJIB 'none' untuk localhost -> dev.trivgoo.com
-      secure: true,
+      // localhost (http)  → sameSite: 'lax',  secure: false
+      // dev.trivgoo.com (https) → sameSite: 'none', secure: true
+      sameSite: IS_DEV ? 'lax' : 'none',
+      secure: !IS_DEV,
       maxAge: timeoutMins * 60 * 1000
     }
   });
 }
 
-// Pasang session default agar rute langsung siap
-app.use(getSessionMiddleware());
+// Pasang session default (30 menit)
+app.use(getSessionMiddleware(30));
 
 // --------------------
 // 4. ROUTES (HARUS DI LUAR ASYNC START)
 // --------------------
 console.log("--- [BOOT] Registering Routes Sync ---");
 
-// Static files & API No-Cache
 const path = require('path');
 
 // Static umum
@@ -92,8 +123,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use('/products/tour',      express.static(path.join(__dirname, 'public/products/tour')));
 app.use('/products/stay',      express.static(path.join(__dirname, 'public/products/stay')));
 app.use('/products/transport', express.static(path.join(__dirname, 'public/products/transport')));
-app.use('/car-rental', express.static(path.join(__dirname, 'public/car-rental')));
+app.use('/car-rental',         express.static(path.join(__dirname, 'public/car-rental')));
 
+// API: no-cache header
 app.use('/api', (_, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();
@@ -104,14 +136,11 @@ console.log("Checking routerNav...");
 // Mount Main Router
 app.use('/api/v1', routerNav);
 
-app.use((req, res) => {
-    console.log(`[REJECTED] 404 pada: ${req.method} ${req.url}`);
-    res.status(404).send('Not Found via Express Final Handler');
-});
-
 // --------------------
 // 5. ERROR HANDLERS
 // --------------------
+
+// 404 handler
 app.use((req, res) => {
   console.warn(`[404 NOT FOUND] ${req.method} ${req.originalUrl}`);
   res.status(404).json({
@@ -121,6 +150,7 @@ app.use((req, res) => {
   });
 });
 
+// Global error handler
 app.use((err, req, res, next) => {
   console.error('[SERVER ERROR]', err);
   res.status(500).json({
@@ -131,22 +161,24 @@ app.use((err, req, res, next) => {
 });
 
 // --------------------
-// 6. BOOTSTRAP (Hanya DB & Listen)
+// 6. BOOTSTRAP (DB check & Listen)
 // --------------------
 async function start() {
   const db = require('./src/configs/db');
 
   try {
     console.log("[INIT] Checking Database Connection...");
-    // Cek koneksi saja, tidak perlu menunggu settings untuk jalankan rute
-    await db.execute('SELECT 1');
+    await db.raw('SELECT 1');
     console.log("✅ Database Connected.");
   } catch (err) {
     console.error("❌ [DATABASE ERROR] Gagal konek DB saat startup:", err.message);
+    // Tidak exit — biarkan server tetap jalan, DB bisa reconnect
   }
 
   app.listen(PORT, () => {
     console.log(`\n\t*** Server listening on PORT ${PORT} (${NODE_ENV}) ***\n`);
+    console.log(`\tCookie mode  : sameSite=${IS_DEV ? 'lax' : 'none'}, secure=${!IS_DEV}`);
+    console.log(`\tSession store: MySQL (${process.env.DB_NAME})\n`);
   });
 }
 
