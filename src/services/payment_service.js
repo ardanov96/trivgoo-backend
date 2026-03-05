@@ -1,10 +1,11 @@
+// src/services/payment_service.js
 const { Snap } = require('midtrans-client');
 const crypto = require('crypto');
 const { execute } = require('../configs/db');
 
 /**
- * Ambil konfigurasi Midtrans dari tabel payment_settings
- * Tidak lagi bergantung pada .env
+ * Ambil konfigurasi Midtrans dari tabel payment_settings.
+ * Tidak bergantung pada .env — semua key dikelola via Admin → Payment Settings.
  */
 async function getMidtransSnap() {
   const [rows] = await execute(
@@ -24,15 +25,17 @@ async function getMidtransSnap() {
     throw new Error('Midtrans Server Key belum dikonfigurasi. Silakan isi di Admin → Payment Settings.');
   }
 
+  // is_test_mode = 1 → Sandbox (app.sandbox.midtrans.com)
+  // is_test_mode = 0 → Production (app.midtrans.com)
   return new Snap({
-    isProduction: config.is_test_mode === 0,  // is_test_mode=1 → sandbox, is_test_mode=0 → production
+    isProduction: config.is_test_mode === 0,
     serverKey: config.midtrans_server_key,
     clientKey: config.midtrans_client_key || '',
   });
 }
 
 /**
- * Ambil server key saja (untuk verifikasi signature webhook)
+ * Ambil server key saja — untuk verifikasi signature webhook.
  */
 async function getMidtransServerKey() {
   const [rows] = await execute(
@@ -41,6 +44,10 @@ async function getMidtransServerKey() {
   return rows?.[0]?.midtrans_server_key || null;
 }
 
+/**
+ * Buat transaksi Snap Midtrans.
+ * @param {Object} order - { id, amount, name, email }
+ */
 const createTransaction = async (order) => {
   const snap = await getMidtransSnap();
 
@@ -55,9 +62,18 @@ const createTransaction = async (order) => {
     },
   };
 
-  return await snap.createTransaction(parameter);
+  try {
+    return await snap.createTransaction(parameter);
+  } catch (err) {
+    console.error('[MIDTRANS] createTransaction error:', JSON.stringify(err?.ApiResponse || err?.message || err, null, 2));
+    throw err;
+  }
 };
 
+/**
+ * Verifikasi signature dari webhook Midtrans.
+ * @param {Object} notification - payload dari Midtrans webhook
+ */
 const handleNotification = async (notification) => {
   const serverKey = await getMidtransServerKey();
 
@@ -76,7 +92,6 @@ const handleNotification = async (notification) => {
     throw new Error('Invalid signature — webhook mungkin bukan dari Midtrans.');
   }
 
-  // Return status agar controller bisa proses lebih lanjut
   return { transaction_status, order_id };
 };
 

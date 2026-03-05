@@ -3,9 +3,13 @@ const misc = require('../helpers/response');
 const payment_service = require('../services/payment_service');
 const { execute } = require('../configs/db');
 
+/**
+ * POST /api/v1/payment/create-payment
+ * Buat transaksi Midtrans Snap dan simpan ke DB.
+ */
 const createPayment = async (req, res) => {
   try {
-    const { id, amount, name, email } = req.body;
+    const { id, amount, name, email, product_name, quantity } = req.body;
 
     if (!amount || !id || !name || !email) {
       return misc.response(res, 400, true, 'Missing required fields: id, amount, name, email');
@@ -26,8 +30,8 @@ const createPayment = async (req, res) => {
       [
         id,
         name,
-        req.body.product_name || '-',
-        req.body.quantity || 1,
+        product_name || '-',
+        quantity || 1,
         amount,
         transaction.token,
         transaction.redirect_url || null,
@@ -49,18 +53,23 @@ const createPayment = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('[PAYMENT] createPayment error:', error);
+    console.error('[PAYMENT] createPayment error:', error.message);
     return misc.response(res, 500, true, error.message || 'Internal Server Error');
   }
 };
 
+/**
+ * POST /api/v1/payment/notification
+ * Handle webhook notifikasi dari Midtrans (harus public, tidak perlu auth).
+ */
 const handleNotification = async (req, res) => {
   try {
     const notification = req.body;
 
-    // Log webhook dulu sebelum proses apapun
+    // Log webhook sebelum proses apapun
     await execute(
-      `INSERT INTO webhook_logs (gateway, event_type, external_id, transaction_id, payload, signature_verified, status)
+      `INSERT INTO webhook_logs 
+        (gateway, event_type, external_id, transaction_id, payload, signature_verified, status)
        VALUES ('midtrans', ?, ?, ?, ?, false, 'pending')`,
       [
         notification.transaction_status || 'unknown',
@@ -70,7 +79,7 @@ const handleNotification = async (req, res) => {
       ]
     );
 
-    // Verifikasi signature & update status
+    // Verifikasi signature
     await payment_service.handleNotification(notification);
 
     // Map status Midtrans ke status internal
@@ -112,21 +121,25 @@ const handleNotification = async (req, res) => {
 
     // Update webhook log ke processed
     await execute(
-      `UPDATE webhook_logs SET status = 'processed', signature_verified = true, processed_at = NOW()
-       WHERE external_id = ? AND gateway = 'midtrans' ORDER BY id DESC LIMIT 1`,
+      `UPDATE webhook_logs 
+       SET status = 'processed', signature_verified = true, processed_at = NOW()
+       WHERE external_id = ? AND gateway = 'midtrans' 
+       ORDER BY id DESC LIMIT 1`,
       [notification.order_id]
     );
 
     return res.json({ success: true, message: 'Notification processed' });
 
   } catch (error) {
-    console.error('[PAYMENT] handleNotification error:', error);
+    console.error('[PAYMENT] handleNotification error:', error.message);
 
     // Update webhook log ke failed
     if (req.body?.order_id) {
       await execute(
-        `UPDATE webhook_logs SET status = 'failed', error_message = ?, processed_at = NOW()
-         WHERE external_id = ? AND gateway = 'midtrans' ORDER BY id DESC LIMIT 1`,
+        `UPDATE webhook_logs 
+         SET status = 'failed', error_message = ?, processed_at = NOW()
+         WHERE external_id = ? AND gateway = 'midtrans' 
+         ORDER BY id DESC LIMIT 1`,
         [error.message, req.body.order_id]
       ).catch(() => {});
     }
