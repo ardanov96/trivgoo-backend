@@ -25,13 +25,19 @@ async function getMidtransSnap() {
     throw new Error('Midtrans Server Key belum dikonfigurasi. Silakan isi di Admin → Payment Settings.');
   }
 
-  // is_test_mode = 1 → Sandbox (app.sandbox.midtrans.com)
-  // is_test_mode = 0 → Production (app.midtrans.com)
-  return new Snap({
-    isProduction: config.is_test_mode === 0,
+  const isProduction = config.is_test_mode === 0;
+
+  const snap = new Snap({
+    isProduction,
     serverKey: config.midtrans_server_key,
     clientKey: config.midtrans_client_key || '',
   });
+
+  // Attach metadata untuk digunakan controller
+  snap._isProduction = isProduction;
+  snap._clientKey = config.midtrans_client_key || '';
+
+  return snap;
 }
 
 /**
@@ -46,7 +52,8 @@ async function getMidtransServerKey() {
 
 /**
  * Buat transaksi Snap Midtrans.
- * @param {Object} order - { id, amount, name, email }
+ * Return token, redirect_url, is_production, dan client_key
+ * agar frontend bisa load Snap script yang sesuai.
  */
 const createTransaction = async (order) => {
   const snap = await getMidtransSnap();
@@ -63,7 +70,15 @@ const createTransaction = async (order) => {
   };
 
   try {
-    return await snap.createTransaction(parameter);
+    const transaction = await snap.createTransaction(parameter);
+
+    // Return token + metadata environment
+    return {
+      token: transaction.token,
+      redirect_url: transaction.redirect_url,
+      is_production: snap._isProduction,
+      client_key: snap._clientKey,
+    };
   } catch (err) {
     console.error('[MIDTRANS] createTransaction error:', JSON.stringify(err?.ApiResponse || err?.message || err, null, 2));
     throw err;
@@ -72,7 +87,6 @@ const createTransaction = async (order) => {
 
 /**
  * Verifikasi signature dari webhook Midtrans.
- * @param {Object} notification - payload dari Midtrans webhook
  */
 const handleNotification = async (notification) => {
   const serverKey = await getMidtransServerKey();
