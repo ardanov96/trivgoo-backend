@@ -50,7 +50,8 @@ const createPayment = async (req, res) => {
     return misc.response(res, 200, false, 'Snap token created successfully', {
       token: transaction.token,
       redirect_url: transaction.redirect_url,
-      is_production: !config.is_test_mode,
+      is_production: transaction.is_production,  
+      client_key: transaction.client_key,
     });
 
   } catch (error) {
