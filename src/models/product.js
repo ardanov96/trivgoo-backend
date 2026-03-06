@@ -481,6 +481,7 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
 
   const features = (() => { const r = safeJsonParse(row.features, []); return Array.isArray(r) ? r : []; })();
   const details = (() => { const r = safeJsonParse(row.details, {}); return typeof r === "object" && r !== null ? r : {}; })();
+  const blocked_dates = await find_product_blocked_dates(pid);
 
   return {
     id: row.id,
@@ -499,6 +500,7 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
     features,
     details,
     daily_capacity: row.daily_capacity,
+    blocked_dates,
     rating: row.rating ? Number(row.rating) : 0,
     is_active: !!row.is_active,
     created_at: row.created_at,
