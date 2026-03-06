@@ -66,6 +66,8 @@ async function find_product_row_by_id(product_id) {
       p.price,
       p.currency,
       p.location,
+      p.lat,
+      p.lng,
       p.image_url,
       p.daily_capacity,
       p.features,
@@ -158,6 +160,8 @@ async function build_product_response(row) {
     price: Number(row.price),
     currency: row.currency,
     location: row.location,
+    lat: row.lat != null ? Number(row.lat) : null,
+    lng: row.lng != null ? Number(row.lng) : null,
     image,
     images,
     features,
@@ -187,7 +191,7 @@ async function list_all_products() {
     ...row,
     price: Number(row.price),
     rating: row.rating ? Number(row.rating) : 0,
-    image: resolve_image_url(row.image_url, row.owner_specialization),  
+    image: resolve_image_url(row.image_url, row.owner_specialization),
     features: safeJsonParse(row.features, []),
     details: safeJsonParse(row.details, {}),
   }));
@@ -337,7 +341,7 @@ async function list_products_by_owner(owner_id) {
     `
     SELECT
       p.id, p.owner_id, p.category_id, p.name, p.description, p.price,
-      p.currency, p.location, p.image_url, p.daily_capacity, p.features,
+      p.currency, p.location, p.lat, p.lng, p.image_url, p.daily_capacity, p.features,
       p.details, p.rating, p.is_active, p.created_at, p.updated_at,
 
       u.id AS owner_user_id,
@@ -395,6 +399,8 @@ async function list_products_by_owner(owner_id) {
       price: Number(row.price),
       currency: row.currency,
       location: row.location,
+      lat: row.lat != null ? Number(row.lat) : null,
+      lng: row.lng != null ? Number(row.lng) : null,
       image: resolve_image_url(row.image_url, specialization),
       image_url: resolve_image_url(row.image_url, specialization),
       images,
@@ -426,7 +432,7 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
     `
     SELECT
       p.id, p.owner_id, p.category_id, p.name, p.description, p.price,
-      p.currency, p.location, p.image_url, p.daily_capacity, p.features,
+      p.currency, p.location, p.lat, p.lng, p.image_url, p.daily_capacity, p.features,
       p.details, p.rating, p.is_active, p.created_at, p.updated_at,
 
       u.id AS owner_user_id,
@@ -485,6 +491,8 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
     price: Number(row.price),
     currency: row.currency,
     location: row.location,
+    lat: row.lat != null ? Number(row.lat) : null,
+    lng: row.lng != null ? Number(row.lng) : null,
     image: resolve_image_url(row.image_url, specialization),
     image_url: resolve_image_url(row.image_url, specialization),
     images,
