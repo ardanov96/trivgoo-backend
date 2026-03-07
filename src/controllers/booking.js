@@ -31,7 +31,7 @@ const getAllBookings = async (req, res) => {
     sql += ` ORDER BY created_at DESC`;
 
     const [rows] = await db.query(sql, params);
-    
+
     // Format data agar sesuai dengan frontend
     const formattedRows = rows.map(row => ({
       ...row,
@@ -40,10 +40,54 @@ const getAllBookings = async (req, res) => {
       // Convert decimal ke float
       totalPrice: parseFloat(row.totalPrice)
     }));
-    
+
     return response(res, 200, false, 'Bookings fetched successfully', formattedRows);
   } catch (error) {
     console.error('Error fetching bookings:', error);
+    return response(res, 500, true, 'Failed to fetch bookings', null);
+  }
+};
+
+/**
+ * Get bookings for the currently logged-in customer.
+ * Filters by user_id from session.
+ */
+const getMyBookings = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return response(res, 401, true, 'Unauthorized', null);
+    }
+
+    const [rows] = await db.query(
+      `SELECT 
+        b.id, 
+        b.user_id as userId, 
+        b.product_id as productId, 
+        b.product_name as productName, 
+        b.user_name as userName, 
+        b.quantity, 
+        b.total_price as totalPrice, 
+        b.date, 
+        b.status,
+        p.image_url as productImage
+      FROM bookings b
+      LEFT JOIN products p ON b.product_id = p.id
+      WHERE b.user_id = ?
+      ORDER BY b.created_at DESC`,
+      [userId]
+    );
+
+    const formattedRows = rows.map(row => ({
+      ...row,
+      date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
+      totalPrice: parseFloat(row.totalPrice),
+      productImage: row.productImage || null,
+    }));
+
+    return response(res, 200, false, 'My bookings fetched successfully', formattedRows);
+  } catch (error) {
+    console.error('Error fetching my bookings:', error);
     return response(res, 500, true, 'Failed to fetch bookings', null);
   }
 };
@@ -61,7 +105,7 @@ const updateBookingStatus = async (req, res) => {
   try {
     // Cek apakah booking exists
     const [rows] = await db.query('SELECT id FROM bookings WHERE id = ?', [id]);
-    
+
     if (rows.length === 0) {
       return response(res, 404, true, 'Booking not found', null);
     }
@@ -71,7 +115,7 @@ const updateBookingStatus = async (req, res) => {
       'UPDATE bookings SET status = ?, updated_at = NOW() WHERE id = ?',
       [status, id]
     );
-    
+
     return response(res, 200, false, `Booking #${id} status updated to ${status}`, { id, status });
   } catch (error) {
     console.error('Error updating booking status:', error);
@@ -79,4 +123,4 @@ const updateBookingStatus = async (req, res) => {
   }
 };
 
-module.exports = { getAllBookings, updateBookingStatus };
+module.exports = { getAllBookings, updateBookingStatus, getMyBookings };

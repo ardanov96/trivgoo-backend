@@ -4,12 +4,29 @@ const crypto = require('crypto');
 const { execute } = require('../configs/db');
 
 /**
- * Ambil konfigurasi Midtrans dari tabel payment_settings.
- * Tidak bergantung pada .env — semua key dikelola via Admin → Payment Settings.
+ * Mapping dari ID metode pembayaran di DB → format enabled_payments Midtrans Snap.
+ * Midtrans Snap menerima array string seperti:
+ * ['credit_card', 'gopay', 'shopeepay', 'bank_transfer', 'echannel', 'permata_va', 'bca_va', 'bni_va', 'bri_va', 'cstore', 'akulaku']
  */
-async function getMidtransSnap() {
+const PAYMENT_METHOD_MAP = {
+  credit_card: ['credit_card'],
+  gopay: ['gopay'],
+  shopeepay: ['shopeepay'],
+  bank_transfer: ['bank_transfer', 'echannel', 'permata_va', 'bca_va', 'bni_va', 'bri_va', 'other_va'],
+  qris: ['gopay'],        // QRIS di Midtrans Snap diakses via gopay
+  indomaret: ['cstore'],
+  alfamart: ['cstore'],
+  e_wallet: ['gopay', 'shopeepay'],
+  virtual_account: ['bank_transfer', 'echannel', 'permata_va', 'bca_va', 'bni_va', 'bri_va', 'other_va'],
+};
+
+/**
+ * Ambil konfigurasi lengkap Midtrans dari tabel payment_settings.
+ * Termasuk midtrans_payment_methods untuk menentukan enabled_payments.
+ */
+async function getMidtransConfig() {
   const [rows] = await execute(
-    `SELECT midtrans_server_key, midtrans_client_key, is_test_mode
+    `SELECT midtrans_server_key, midtrans_client_key, is_test_mode, midtrans_payment_methods
      FROM payment_settings
      WHERE is_active = 1
      LIMIT 1`
@@ -33,11 +50,40 @@ async function getMidtransSnap() {
     clientKey: config.midtrans_client_key || '',
   });
 
-  // Attach metadata untuk digunakan controller
+  // Attach metadata
   snap._isProduction = isProduction;
   snap._clientKey = config.midtrans_client_key || '';
 
-  return snap;
+  // Parse payment methods dari DB
+  let paymentMethods = [];
+  try {
+    const raw = config.midtrans_payment_methods;
+    paymentMethods = typeof raw === 'string' ? JSON.parse(raw) : (raw || []);
+  } catch (e) {
+    paymentMethods = [];
+  }
+
+  return { snap, paymentMethods };
+}
+
+/**
+ * Bangun array enabled_payments dari konfigurasi di DB.
+ * Hanya metode yang enabled: true yang akan dikirim ke Midtrans.
+ */
+function buildEnabledPayments(paymentMethods) {
+  if (!Array.isArray(paymentMethods) || paymentMethods.length === 0) {
+    return []; // kosong = Midtrans tampilkan semua metode default
+  }
+
+  const enabledSet = new Set();
+  for (const method of paymentMethods) {
+    if (method.enabled) {
+      const mapped = PAYMENT_METHOD_MAP[method.id] || [];
+      mapped.forEach(m => enabledSet.add(m));
+    }
+  }
+
+  return [...enabledSet];
 }
 
 /**
@@ -56,7 +102,10 @@ async function getMidtransServerKey() {
  * agar frontend bisa load Snap script yang sesuai.
  */
 const createTransaction = async (order) => {
-  const snap = await getMidtransSnap();
+  const { snap, paymentMethods } = await getMidtransConfig();
+  const enabledPayments = buildEnabledPayments(paymentMethods);
+
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 
   const parameter = {
     transaction_details: {
@@ -67,12 +116,31 @@ const createTransaction = async (order) => {
       first_name: order.name,
       email: order.email,
     },
+    callbacks: {
+      finish: `${frontendUrl}/my-bookings`,
+    },
   };
+
+  // Hanya tambahkan enabled_payments jika ada yang dikonfigurasi
+  if (enabledPayments.length > 0) {
+    parameter.enabled_payments = enabledPayments;
+  }
+
+  console.log('[MIDTRANS] Creating transaction:', {
+    order_id: order.id,
+    amount: order.amount,
+    isProduction: snap._isProduction,
+    enabled_payments: enabledPayments.length > 0 ? enabledPayments : 'ALL (default)',
+  });
 
   try {
     const transaction = await snap.createTransaction(parameter);
 
-    // Return token + metadata environment
+    console.log('[MIDTRANS] Transaction created successfully:', {
+      token: transaction.token ? '✓' : '✗',
+      redirect_url: transaction.redirect_url ? '✓' : '✗',
+    });
+
     return {
       token: transaction.token,
       redirect_url: transaction.redirect_url,

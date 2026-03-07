@@ -9,7 +9,9 @@ const { execute } = require('../configs/db');
  */
 const createPayment = async (req, res) => {
   try {
-    const { id, amount, name, email, product_name, quantity } = req.body;
+    const { id, amount, name, email, product_name, quantity, product_id } = req.body;
+    // Use session user_id (reliable) instead of frontend-submitted user_id
+    const user_id = req.session?.user?.id || req.body.user_id || null;
 
     if (!amount || !id || !name || !email) {
       return misc.response(res, 400, true, 'Missing required fields: id, amount, name, email');
@@ -18,17 +20,19 @@ const createPayment = async (req, res) => {
     // Buat transaksi Midtrans Snap
     const transaction = await payment_service.createTransaction({ id, amount, name, email });
 
-    // Simpan ke tabel bookings
+    // Simpan ke tabel bookings (dengan user_id, product_id, dan payment_gateway)
     await execute(
       `INSERT INTO bookings 
-        (external_id, user_name, product_name, quantity, total_price, date, status, payment_token, payment_url)
-       VALUES (?, ?, ?, ?, ?, CURDATE(), 'PENDING', ?, ?)
+        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, status, payment_token, payment_url, payment_gateway, payment_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), 'PENDING', ?, ?, 'midtrans', 'PENDING')
        ON DUPLICATE KEY UPDATE
         payment_token = VALUES(payment_token),
         payment_url   = VALUES(payment_url),
         updated_at    = NOW()`,
       [
         id,
+        user_id || null,
+        product_id || null,
         name,
         product_name || '-',
         quantity || 1,
@@ -38,19 +42,19 @@ const createPayment = async (req, res) => {
       ]
     );
 
-    // Simpan ke tabel payment_transactions
+    // Simpan ke tabel payment_transactions (dengan user_id)
     await execute(
       `INSERT INTO payment_transactions
-        (booking_id, gateway, external_id, amount, currency, status, gateway_response)
-       SELECT id, 'midtrans', ?, ?, 'IDR', 'PENDING', ?
+        (booking_id, user_id, gateway, external_id, amount, currency, status, gateway_response)
+       SELECT id, ?, 'midtrans', ?, ?, 'IDR', 'PENDING', ?
        FROM bookings WHERE external_id = ? LIMIT 1`,
-      [id, amount, JSON.stringify(transaction), id]
+      [user_id || null, id, amount, JSON.stringify(transaction), id]
     );
 
     return misc.response(res, 200, false, 'Snap token created successfully', {
       token: transaction.token,
       redirect_url: transaction.redirect_url,
-      is_production: transaction.is_production,  
+      is_production: transaction.is_production,
       client_key: transaction.client_key,
     });
 
@@ -86,14 +90,14 @@ const handleNotification = async (req, res) => {
 
     // Map status Midtrans ke status internal
     const statusMap = {
-      settlement : 'PAID',
-      capture    : 'PAID',
-      pending    : 'PENDING',
-      deny       : 'FAILED',
-      expire     : 'EXPIRED',
-      cancel     : 'CANCELLED',
-      refund     : 'REFUNDED',
-      chargeback : 'FAILED',
+      settlement: 'PAID',
+      capture: 'PAID',
+      pending: 'PENDING',
+      deny: 'FAILED',
+      expire: 'EXPIRED',
+      cancel: 'CANCELLED',
+      refund: 'REFUNDED',
+      chargeback: 'FAILED',
     };
     const newStatus = statusMap[notification.transaction_status] || 'PENDING';
 
@@ -143,7 +147,7 @@ const handleNotification = async (req, res) => {
          WHERE external_id = ? AND gateway = 'midtrans' 
          ORDER BY id DESC LIMIT 1`,
         [error.message, req.body.order_id]
-      ).catch(() => {});
+      ).catch(() => { });
     }
 
     return res.status(500).json({ success: false, message: error.message });

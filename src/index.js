@@ -10,6 +10,7 @@ const media = require("./routes/media");
 const cars = require("./routes/car");
 const cart = require("./routes/cart");
 const payment = require("./routes/payment");
+const bookings = require("./routes/booking");
 
 
 Route.use("/", publicRoutes);
@@ -20,5 +21,6 @@ Route.use("/media", media);
 Route.use("/cars", cars);
 Route.use("/cart", cart);
 Route.use("/payment", payment);
+Route.use("/bookings", bookings);
 
 module.exports = Route;

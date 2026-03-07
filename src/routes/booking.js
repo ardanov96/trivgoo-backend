@@ -1,12 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const bookingController = require('../controllers/booking');
-const auth = require('../middleware/auth'); // Pastikan ini ada sesuai folder kamu
+const { requireAuth } = require('../middleware/auth');
 
-// Get all bookings dengan filter/search
-router.get('/', auth, bookingController.getAllBookings);
+// Get bookings for logged-in customer
+router.get('/my', requireAuth, bookingController.getMyBookings);
+
+// Get all bookings dengan filter/search (admin)
+router.get('/', requireAuth, bookingController.getAllBookings);
 
 // Update status booking
-router.patch('/:id/status', auth, bookingController.updateBookingStatus);
+router.patch('/:id/status', requireAuth, bookingController.updateBookingStatus);
 
 module.exports = router;
