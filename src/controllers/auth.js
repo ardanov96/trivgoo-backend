@@ -213,12 +213,12 @@ module.exports = {
         name: updatedUser.name,
         email: updatedUser.email,
         // Optional: Jika ingin session menyimpan info foto
-        profile_photo: updatedUser.profile_photo 
+        profile_photo: updatedUser.profile_photo
       };
 
       req.session.save((err) => {
         if (err) return misc.response(res, 500, true, 'Failed to update session');
-        
+
         return misc.response(res, 200, false, 'Profile updated successfully', {
           user: to_safe_user(updatedUser),
         });
@@ -243,8 +243,8 @@ module.exports = {
       const expires = new Date(Date.now() + 3600000); // 1 Jam
 
       // Simpan ke tabel password_resets (Hapus yang lama jika ada)
-      await db('password_resets').where({ email }).del();
-      await db('password_resets').insert({ email, token, expires_at: expires });
+      await db.execute('DELETE FROM password_resets WHERE email = ?', [email]);
+      await db.execute('INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?)', [email, token, expires]);
 
       await send_reset_password_email(user.email, user.name, token, user.role.toLowerCase());
 
@@ -258,22 +258,43 @@ module.exports = {
     try {
       const { token, password } = req.body;
 
-      const resetRequest = await db('password_resets').where({ token }).first();
+      const [rows] = await db.execute('SELECT * FROM password_resets WHERE token = ? LIMIT 1', [token]);
+      const resetRequest = rows[0];
       if (!resetRequest || new Date() > new Date(resetRequest.expires_at)) {
         return misc.response(res, 400, true, 'Token tidak valid atau sudah kadaluwarsa');
       }
 
       const password_hash = await bcrypt.hash(password, 10);
 
-      await db('users').where({ email: resetRequest.email }).update({ 
-        password_hash, 
-        updated_at: new Date() 
-      });
-      
+      await db.execute('UPDATE users SET password_hash = ?, updated_at = NOW() WHERE email = ?', [password_hash, resetRequest.email]);
+
       // Hapus token setelah digunakan
-      await db('password_resets').where({ email: resetRequest.email }).del();
+      await db.execute('DELETE FROM password_resets WHERE email = ?', [resetRequest.email]);
 
       return misc.response(res, 200, false, 'Password berhasil diperbarui. Silakan login.');
+    } catch (e) {
+      return misc.response(res, 500, true, e.message);
+    }
+  },
+
+  validate_reset_token: async (req, res) => {
+    try {
+      const { token } = req.query;
+      if (!token) {
+        return misc.response(res, 400, true, 'Token is required');
+      }
+
+      const [rows] = await db.execute(
+        'SELECT email, expires_at FROM password_resets WHERE token = ? LIMIT 1',
+        [token]
+      );
+      const resetRequest = rows[0];
+
+      if (!resetRequest || new Date() > new Date(resetRequest.expires_at)) {
+        return misc.response(res, 400, true, 'Token tidak valid atau sudah kadaluwarsa');
+      }
+
+      return misc.response(res, 200, false, 'Token valid', { email: resetRequest.email });
     } catch (e) {
       return misc.response(res, 500, true, e.message);
     }

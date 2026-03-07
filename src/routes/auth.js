@@ -14,6 +14,7 @@ Route.post("/logout", requireAuth, auth.logout);
 Route.patch("/update-profile", requireAuth, upload.single("profile_photo"), auth.update_profile);
 
 Route.post("/forgot-password", auth.forgot_password);
+Route.get("/reset-password", auth.validate_reset_token);
 Route.post("/reset-password", auth.reset_password);
 
 module.exports = Route;
