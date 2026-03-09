@@ -17,4 +17,6 @@ Route.post("/forgot-password", auth.forgot_password);
 Route.get("/reset-password", auth.validate_reset_token);
 Route.post("/reset-password", auth.reset_password);
 
+Route.get("/verify-email", auth.verify_email);
+
 module.exports = Route;

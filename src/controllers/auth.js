@@ -1,12 +1,20 @@
 const bcrypt = require('bcryptjs');
 const misc = require('../helpers/response');
 
-const { find_user_by_email, create_user, find_user_by_id, update_user } = require('../models/user');
+const {
+  find_user_by_email,
+  create_user,
+  find_user_by_id,
+  update_user,
+  save_activation_token,
+  verify_email_token,
+  mark_email_verified
+} = require('../models/user');
 
 const { create_default_profile } = require('../models/profile');
 
 const crypto = require('crypto');
-const { send_reset_password_email } = require('../helpers/mailer');
+const { send_reset_password_email, send_activation_email } = require('../helpers/mailer');
 const db = require('../configs/db');
 
 require('dotenv').config();
@@ -46,7 +54,7 @@ function to_safe_user(user_row) {
 module.exports = {
   register: async (req, res) => {
     try {
-      const { name, email, password, role, specialization } = req.body || {};
+      const { name, email, password, role, specialization, phone_number } = req.body || {};
 
       if (!name || !email || !password) {
         return misc.response(res, 400, true, 'name, email, dan password wajib diisi');
@@ -68,6 +76,7 @@ module.exports = {
         password_hash,
         role: norm_role,
         specialization: norm_spec,
+        phone_number,
       });
 
       try {
@@ -75,6 +84,17 @@ module.exports = {
       } catch (e) {
         console.error('[PROFILE] create_default_profile failed:', new_user?.id, e?.message);
       }
+
+      // -- Email Verification Logic --
+      try {
+        const activationToken = crypto.randomBytes(32).toString('hex');
+        await save_activation_token(new_user.email, activationToken);
+        await send_activation_email(new_user.email, new_user.name, activationToken, new_user.role.toLowerCase());
+      } catch (e) {
+        console.error('[EMAIL] Failed to send activation email:', e?.message);
+        // Kita biarkan pendaftaran tetap sukses meskipun gagal kirim email (bisa di-\`resend\` nanti)
+      }
+      // ------------------------------
 
       set_session_user(req, new_user);
 
@@ -84,7 +104,7 @@ module.exports = {
           return misc.response(res, 500, true, 'Failed to create session');
         }
 
-        return misc.response(res, 201, false, 'Register successfully', {
+        return misc.response(res, 201, false, 'Register successfully. Please check your email to activate your account.', {
           user: req.session.user,
         });
       });
@@ -117,6 +137,10 @@ module.exports = {
 
       if (!user.is_active) {
         return misc.response(res, 403, true, 'Akun tidak aktif');
+      }
+
+      if (user.verification_status !== 'VERIFIED') {
+        return misc.response(res, 403, true, 'Silakan verifikasi email Anda terlebih dahulu sebelum login');
       }
 
       req.session.regenerate((regen_err) => {
@@ -295,6 +319,27 @@ module.exports = {
       }
 
       return misc.response(res, 200, false, 'Token valid', { email: resetRequest.email });
+    } catch (e) {
+      return misc.response(res, 500, true, e.message);
+    }
+  },
+
+  verify_email: async (req, res) => {
+    try {
+      const { token } = req.query;
+      if (!token) {
+        return misc.response(res, 400, true, 'Token aktivasi tidak ditemukan');
+      }
+
+      const activationRecord = await verify_email_token(token);
+      if (!activationRecord) {
+        return misc.response(res, 400, true, 'Token aktivasi tidak valid atau telah kedaluwarsa');
+      }
+
+      // Tandai diverifikasi (VERIFIED) dan bersihkan tokennya
+      await mark_email_verified(activationRecord.email);
+
+      return misc.response(res, 200, false, 'Email berhasil diverifikasi! Silakan login.');
     } catch (e) {
       return misc.response(res, 500, true, e.message);
     }
