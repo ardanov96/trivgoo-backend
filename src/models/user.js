@@ -51,6 +51,7 @@ async function create_user({
   password_hash,
   role,
   specialization = null,
+  phone_number = null,
 }) {
   const [result] = await db.query(
     `
@@ -59,11 +60,12 @@ async function create_user({
         email,
         password_hash,
         role,
-        specialization
+        specialization,
+        phone_number
       )
-      VALUES (?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?)
     `,
-    [name, email, password_hash, role, specialization]
+    [name, email, password_hash, role, specialization, phone_number]
   );
 
   const [rows] = await db.query(
@@ -104,7 +106,7 @@ async function update_verification_status(user_id, status) {
 
 async function update_user_profile(userId, { name, avatar_url, new_password }) {
   return await db.transaction(async (conn) => {
-    
+
     if (name) {
       await conn.query('UPDATE users SET name = ? WHERE id = ?', [name, userId]);
     }
@@ -130,7 +132,7 @@ async function update_user_profile(userId, { name, avatar_url, new_password }) {
 async function verify_password(userId, plainPassword) {
   const [rows] = await db.query('SELECT password_hash FROM users WHERE id = ?', [userId]);
   if (!rows[0] || !rows[0].password_hash) return false;
-  
+
   // Sekarang bcrypt sudah didefinisikan dan bisa digunakan
   return await bcrypt.compare(plainPassword, rows[0].password_hash);
 }
@@ -191,6 +193,34 @@ async function reset_password(user_id, new_password) {
   );
 }
 
+/**
+ * Aktivasi Email
+ */
+async function save_activation_token(email, token) {
+  const expires_at = new Date(Date.now() + 20 * 60 * 1000); // 20 Menit
+
+  await db.query(
+    `INSERT INTO email_verifications (email, token, expires_at)
+     VALUES (?, ?, ?)`,
+    [email, token, expires_at]
+  );
+}
+
+async function verify_email_token(token) {
+  const [rows] = await db.query(
+    `SELECT * FROM email_verifications
+     WHERE token = ? AND expires_at > NOW()
+     LIMIT 1`,
+    [token]
+  );
+  return rows[0] || null;
+}
+
+async function mark_email_verified(email) {
+  await db.query(`UPDATE users SET verification_status = 'VERIFIED', updated_at = NOW() WHERE email = ?`, [email]);
+  await db.query(`DELETE FROM email_verifications WHERE email = ?`, [email]);
+}
+
 module.exports = {
   find_user_by_email,
   find_user_by_id,
@@ -202,6 +232,9 @@ module.exports = {
   find_valid_reset_token,
   mark_token_used,
   reset_password,
+  save_activation_token,
+  verify_email_token,
+  mark_email_verified,
 
   update_user: async (id, data) => {
     await knex('users').where({ id }).update(data);
