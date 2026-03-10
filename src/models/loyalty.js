@@ -1,236 +1,300 @@
 // src/models/loyalty.js
-const conn = require('../configs/db');
+const db = require('../configs/db');
 
-async function query(sql, params = []) {
-  try {
-    const [rows] = await conn.execute(sql, params);
-    return rows;
-  } catch (err) {
-    err.message = `${err.message}\nSQL: ${sql}`;
-    throw err;
-  }
-}
+// ─── Formatters ───────────────────────────────────────────────────────────────
 
-// ── Point Balance ─────────────────────────────────────────────────────────────
-
-async function get_point_balance(user_id) {
-  const rows = await query(
-    `SELECT balance, lifetime_earned, lifetime_spent, lifetime_expired
-     FROM point_balances WHERE user_id = ? LIMIT 1`,
-    [user_id]
-  );
-  if (rows[0]) return rows[0];
-  // Buat row baru jika belum ada
-  await query(
-    `INSERT INTO point_balances (user_id, balance, lifetime_earned, lifetime_spent, lifetime_expired)
-     VALUES (?, 0, 0, 0, 0)
-     ON DUPLICATE KEY UPDATE user_id = user_id`,
-    [user_id]
-  );
-  return { balance: 0, lifetime_earned: 0, lifetime_spent: 0, lifetime_expired: 0 };
-}
-
-async function upsert_point_balance(user_id, delta_balance, delta_earned = 0, delta_spent = 0, delta_expired = 0) {
-  await query(
-    `INSERT INTO point_balances (user_id, balance, lifetime_earned, lifetime_spent, lifetime_expired)
-     VALUES (?, GREATEST(0, ?), ?, ?, ?)
-     ON DUPLICATE KEY UPDATE
-       balance          = GREATEST(0, balance + ?),
-       lifetime_earned  = lifetime_earned  + ?,
-       lifetime_spent   = lifetime_spent   + ?,
-       lifetime_expired = lifetime_expired + ?`,
-    [
-      user_id,
-      delta_balance, delta_earned, delta_spent, delta_expired,
-      delta_balance, delta_earned, delta_spent, delta_expired,
-    ]
-  );
-}
-
-// ── Point Transactions ────────────────────────────────────────────────────────
-
-async function get_point_transactions(user_id, { page = 1, limit = 10, type } = {}) {
-  const offset = (page - 1) * limit;
-  const params = [user_id];
-  let where_extra = '';
-
-  if (type) {
-    where_extra = ' AND type = ?';
-    params.push(type);
-  }
-
-  const rows = await query(
-    `SELECT id, type, points, balance_after, ref_type, ref_id, note, expires_at, created_at
-     FROM point_transactions
-     WHERE user_id = ?${where_extra}
-     ORDER BY created_at DESC
-     LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
-  );
-
-  const count_rows = await query(
-    `SELECT COUNT(*) AS total FROM point_transactions WHERE user_id = ?${where_extra}`,
-    params
-  );
-
+function fmt_tier(row) {
+  if (!row) return null;
   return {
-    transactions: rows,
-    meta: {
-      total: count_rows[0].total,
-      page,
-      limit,
-      total_pages: Math.ceil(count_rows[0].total / limit),
-    },
+    id:                   row.id,
+    name:                 row.name,
+    slug:                 row.slug,
+    description:          row.description,
+    icon:                 row.icon,
+    color:                row.color,
+    min_spending:         Number(row.min_spending),
+    min_points:           Number(row.min_points),
+    discount_percent:     Number(row.discount_percent),
+    point_multiplier:     Number(row.point_multiplier),
+    max_discount_per_order: row.max_discount_per_order != null ? Number(row.max_discount_per_order) : null,
+    level:                Number(row.level),
+    is_active:            Number(row.is_active),
   };
 }
 
-async function create_point_transaction(user_id, { type, points, balance_after, ref_type = null, ref_id = null, note = null, expires_at = null }) {
-  const result = await query(
-    `INSERT INTO point_transactions
-       (user_id, type, points, balance_after, ref_type, ref_id, note, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [user_id, type, points, balance_after, ref_type, ref_id, note, expires_at]
-  );
-  return result.insertId;
+function fmt_balance(row) {
+  if (!row) return null;
+  return {
+    balance:          Number(row.balance),
+    lifetime_earned:  Number(row.lifetime_earned),
+    lifetime_spent:   Number(row.lifetime_spent),
+    lifetime_expired: Number(row.lifetime_expired),
+  };
 }
 
-// ── Membership Tiers ──────────────────────────────────────────────────────────
+function fmt_transaction(row) {
+  if (!row) return null;
+  return {
+    id:            row.id,
+    type:          row.type,
+    points:        Number(row.points),
+    balance_after: Number(row.balance_after),
+    ref_type:      row.ref_type,
+    ref_id:        row.ref_id,
+    note:          row.note,
+    expires_at:    row.expires_at,
+    created_at:    row.created_at,
+  };
+}
+
+function fmt_redemption(row) {
+  if (!row) return null;
+  return {
+    id:               row.id,
+    points_spent:     Number(row.points_spent),
+    redemption_type:  row.redemption_type,
+    voucher_id:       row.voucher_id,
+    voucher_value:    row.voucher_value != null ? Number(row.voucher_value) : null,
+    voucher_code:     row.voucher_code || null,
+    order_id:         row.order_id,
+    discount_amount:  row.discount_amount != null ? Number(row.discount_amount) : null,
+    status:           row.status,
+    expires_at:       row.expires_at,
+    created_at:       row.created_at,
+  };
+}
+
+// ─── Membership Tiers ─────────────────────────────────────────────────────────
 
 async function get_all_tiers() {
-  return query(
-    `SELECT id, name, slug, description, icon, color, min_spending, min_points,
-            discount_percent, point_multiplier, max_discount_per_order, level, is_active
-     FROM membership_tiers
-     WHERE is_active = 1
-     ORDER BY level ASC`
+  const [rows] = await db.execute(
+    `SELECT * FROM membership_tiers WHERE is_active = 1 ORDER BY level ASC`
   );
-}
-
-async function get_all_tiers_admin() {
-  return query(
-    `SELECT id, name, slug, description, icon, color, min_spending, min_points,
-            discount_percent, point_multiplier, max_discount_per_order, level, is_active
-     FROM membership_tiers
-     ORDER BY level ASC`
-  );
+  return rows.map(fmt_tier);
 }
 
 async function get_tier_by_id(id) {
-  const rows = await query(
+  const [[row]] = await db.execute(
     `SELECT * FROM membership_tiers WHERE id = ? LIMIT 1`, [id]
   );
-  return rows[0] || null;
+  return fmt_tier(row);
+}
+
+// Admin CRUD
+async function list_tiers_admin() {
+  const [rows] = await db.execute(`SELECT * FROM membership_tiers ORDER BY level ASC`);
+  return rows.map(fmt_tier);
 }
 
 async function create_tier(payload) {
-  const result = await query(
+  const [res] = await db.execute(
     `INSERT INTO membership_tiers
        (name, slug, description, icon, color, min_spending, min_points,
         discount_percent, point_multiplier, max_discount_per_order, level, is_active)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      payload.name, payload.slug, payload.description ?? null,
-      payload.icon ?? null, payload.color ?? null,
-      payload.min_spending ?? 0, payload.min_points ?? 0,
-      payload.discount_percent ?? 0, payload.point_multiplier ?? 1,
-      payload.max_discount_per_order ?? null,
-      payload.level ?? 0, payload.is_active ?? 1,
+      payload.name,
+      payload.slug || payload.name.toLowerCase().replace(/\s+/g, '-'),
+      payload.description || null,
+      payload.icon || null,
+      payload.color || null,
+      Number(payload.min_spending) || 0,
+      Number(payload.min_points) || 0,
+      Number(payload.discount_percent) || 0,
+      Number(payload.point_multiplier) || 1,
+      payload.max_discount_per_order != null ? Number(payload.max_discount_per_order) : null,
+      Number(payload.level) || 1,
+      payload.is_active != null ? Number(payload.is_active) : 1,
     ]
   );
-  return get_tier_by_id(result.insertId);
+  return get_tier_by_id(res.insertId);
 }
 
 async function update_tier(id, payload) {
-  const fields = [];
-  const values = [];
+  const fields = [], values = [];
+  const sf = (col, val) => { fields.push(`${col} = ?`); values.push(val); };
 
-  const allowed = ['name', 'slug', 'description', 'icon', 'color', 'min_spending',
-    'min_points', 'discount_percent', 'point_multiplier', 'max_discount_per_order',
-    'level', 'is_active'];
+  if (payload.name               !== undefined) sf('name',                   payload.name);
+  if (payload.slug               !== undefined) sf('slug',                   payload.slug);
+  if (payload.description        !== undefined) sf('description',            payload.description ?? null);
+  if (payload.icon               !== undefined) sf('icon',                   payload.icon ?? null);
+  if (payload.color              !== undefined) sf('color',                  payload.color ?? null);
+  if (payload.min_spending       !== undefined) sf('min_spending',           Number(payload.min_spending));
+  if (payload.min_points         !== undefined) sf('min_points',             Number(payload.min_points));
+  if (payload.discount_percent   !== undefined) sf('discount_percent',       Number(payload.discount_percent));
+  if (payload.point_multiplier   !== undefined) sf('point_multiplier',       Number(payload.point_multiplier));
+  if (payload.max_discount_per_order !== undefined) sf('max_discount_per_order', payload.max_discount_per_order != null ? Number(payload.max_discount_per_order) : null);
+  if (payload.level              !== undefined) sf('level',                  Number(payload.level));
+  if (payload.is_active          !== undefined) sf('is_active',              Number(payload.is_active));
 
-  for (const key of allowed) {
-    if (payload[key] !== undefined) {
-      fields.push(`${key} = ?`);
-      values.push(payload[key]);
-    }
-  }
-
-  if (fields.length === 0) return get_tier_by_id(id);
-
-  await query(
-    `UPDATE membership_tiers SET ${fields.join(', ')} WHERE id = ?`,
-    [...values, id]
-  );
+  if (!fields.length) return get_tier_by_id(id);
+  sf('updated_at', new Date());
+  await db.execute(`UPDATE membership_tiers SET ${fields.join(', ')} WHERE id = ?`, [...values, id]);
   return get_tier_by_id(id);
 }
 
 async function delete_tier(id) {
-  const result = await query(
-    `DELETE FROM membership_tiers WHERE id = ?`, [id]
-  );
-  return { affected_rows: result.affectedRows };
+  const [[row]] = await db.execute(`SELECT id FROM membership_tiers WHERE id = ? LIMIT 1`, [id]);
+  if (!row) return false;
+  await db.execute(`DELETE FROM membership_tiers WHERE id = ?`, [id]);
+  return true;
 }
 
-// ── User Membership ───────────────────────────────────────────────────────────
+// ─── User Membership ──────────────────────────────────────────────────────────
 
 async function get_user_membership(user_id) {
-  const rows = await query(
-    `SELECT um.*, mt.name AS tier_name, mt.slug AS tier_slug,
-            mt.color AS tier_color, mt.description AS tier_description,
-            mt.icon AS tier_icon, mt.discount_percent, mt.point_multiplier,
-            mt.max_discount_per_order, mt.level AS tier_level,
-            mt.min_spending, mt.min_points
+  // Ambil membership user
+  const [[mem]] = await db.execute(
+    `SELECT um.*, mt.name AS tier_name, mt.slug AS tier_slug, mt.description AS tier_description,
+            mt.icon AS tier_icon, mt.color AS tier_color,
+            mt.min_spending AS tier_min_spending, mt.min_points AS tier_min_points,
+            mt.discount_percent, mt.point_multiplier, mt.max_discount_per_order,
+            mt.level AS tier_level
      FROM user_memberships um
      JOIN membership_tiers mt ON mt.id = um.tier_id
-     WHERE um.user_id = ? LIMIT 1`,
+     WHERE um.user_id = ?
+     LIMIT 1`,
     [user_id]
   );
-  return rows[0] || null;
-}
 
-async function upsert_user_membership(user_id, tier_id) {
-  await query(
-    `INSERT INTO user_memberships (user_id, tier_id, tier_achieved_at)
-     VALUES (?, ?, NOW())
-     ON DUPLICATE KEY UPDATE tier_id = ?, tier_achieved_at = NOW()`,
-    [user_id, tier_id, tier_id]
-  );
-}
+  if (!mem) return null;
 
-async function get_user_total_spending(user_id) {
-  const rows = await query(
-    `SELECT COALESCE(SUM(total_price), 0) AS total
-     FROM bookings
-     WHERE user_id = ? AND status IN ('CONFIRMED', 'COMPLETED')`,
-    [user_id]
-  );
-  return Number(rows[0]?.total ?? 0);
-}
-
-// Hitung tier yang sesuai berdasarkan spending & points
-async function resolve_tier_for_user(user_id) {
-  const spending = await get_user_total_spending(user_id);
-  const balance_row = await get_point_balance(user_id);
-  const total_points = Number(balance_row.lifetime_earned ?? 0);
-
-  const tiers = await query(
-    `SELECT * FROM membership_tiers WHERE is_active = 1 ORDER BY level DESC`
+  // Ambil tier berikutnya
+  const [[next_tier]] = await db.execute(
+    `SELECT * FROM membership_tiers
+     WHERE level > ? AND is_active = 1
+     ORDER BY level ASC LIMIT 1`,
+    [mem.tier_level]
   );
 
-  for (const tier of tiers) {
-    if (spending >= Number(tier.min_spending) && total_points >= Number(tier.min_points)) {
-      return tier;
-    }
+  const spending = Number(mem.total_spending);
+  const progress_percent = next_tier
+    ? Math.min(100, Math.round((spending / Number(next_tier.min_spending)) * 100))
+    : 100;
+  const spending_to_next = next_tier
+    ? Math.max(0, Number(next_tier.min_spending) - spending)
+    : 0;
+
+  return {
+    tier: {
+      id:                     mem.tier_id,
+      name:                   mem.tier_name,
+      slug:                   mem.tier_slug,
+      description:            mem.tier_description,
+      icon:                   mem.tier_icon,
+      color:                  mem.tier_color,
+      min_spending:           Number(mem.tier_min_spending),
+      min_points:             Number(mem.tier_min_points),
+      discount_percent:       Number(mem.discount_percent),
+      point_multiplier:       Number(mem.point_multiplier),
+      max_discount_per_order: mem.max_discount_per_order != null ? Number(mem.max_discount_per_order) : null,
+      level:                  Number(mem.tier_level),
+    },
+    total_spending:      spending,
+    total_points_earned: Number(mem.total_points_earned),
+    tier_achieved_at:    mem.tier_achieved_at,
+    tier_expires_at:     mem.tier_expires_at,
+    next_tier:           next_tier ? fmt_tier(next_tier) : null,
+    progress_percent,
+    spending_to_next,
+  };
+}
+
+// Admin: list semua user membership
+async function list_user_memberships({ page = 1, limit = 20, tier_id, q } = {}) {
+  const offset = (Number(page) - 1) * Number(limit);
+  const params = [];
+  let where = 'WHERE 1=1';
+
+  if (tier_id) { where += ' AND um.tier_id = ?'; params.push(tier_id); }
+  if (q)       { where += ' AND (u.name LIKE ? OR u.email LIKE ?)'; params.push(`%${q}%`, `%${q}%`); }
+
+  const [rows] = await db.execute(
+    `SELECT um.*, u.name AS user_name, u.email AS user_email,
+            mt.name AS tier_name, mt.slug AS tier_slug, mt.color AS tier_color, mt.icon AS tier_icon
+     FROM user_memberships um
+     JOIN users u  ON u.id  = um.user_id
+     JOIN membership_tiers mt ON mt.id = um.tier_id
+     ${where}
+     ORDER BY um.total_spending DESC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), offset]
+  );
+
+  const [[countRow]] = await db.execute(
+    `SELECT COUNT(*) AS total FROM user_memberships um
+     JOIN users u ON u.id = um.user_id ${where}`,
+    params
+  );
+
+  return {
+    memberships: rows.map((r) => ({
+      user_id:             r.user_id,
+      user_name:           r.user_name,
+      user_email:          r.user_email,
+      tier_id:             r.tier_id,
+      tier_name:           r.tier_name,
+      tier_slug:           r.tier_slug,
+      tier_color:          r.tier_color,
+      tier_icon:           r.tier_icon,
+      total_spending:      Number(r.total_spending),
+      total_points_earned: Number(r.total_points_earned),
+      tier_achieved_at:    r.tier_achieved_at,
+      tier_expires_at:     r.tier_expires_at,
+    })),
+    total: Number(countRow.total),
+    page:  Number(page),
+    limit: Number(limit),
+  };
+}
+
+// ─── Point Balance ────────────────────────────────────────────────────────────
+
+async function get_balance(user_id) {
+  const [[row]] = await db.execute(
+    `SELECT * FROM point_balances WHERE user_id = ? LIMIT 1`, [user_id]
+  );
+  if (!row) {
+    // Return zero balance jika belum ada record
+    return { balance: 0, lifetime_earned: 0, lifetime_spent: 0, lifetime_expired: 0 };
   }
-
-  // Kembalikan tier terendah (level 0)
-  return tiers[tiers.length - 1] || null;
+  return fmt_balance(row);
 }
 
-// ── Point Redemptions ─────────────────────────────────────────────────────────
+// ─── Point Transactions ───────────────────────────────────────────────────────
+
+async function get_transactions(user_id, { page = 1, limit = 20, type } = {}) {
+  const offset = (Number(page) - 1) * Number(limit);
+  const params = [user_id];
+  let where = 'WHERE user_id = ?';
+
+  if (type) { where += ' AND type = ?'; params.push(type); }
+
+  const [rows] = await db.execute(
+    `SELECT * FROM point_transactions ${where}
+     ORDER BY created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), offset]
+  );
+
+  const [[countRow]] = await db.execute(
+    `SELECT COUNT(*) AS total FROM point_transactions ${where}`, params
+  );
+
+  return {
+    transactions: rows.map(fmt_transaction),
+    meta: {
+      total: Number(countRow.total),
+      page:  Number(page),
+      limit: Number(limit),
+    },
+  };
+}
+
+// ─── Point Redemptions ────────────────────────────────────────────────────────
 
 async function get_redemptions(user_id) {
-  return query(
+  const [rows] = await db.execute(
     `SELECT pr.*, v.code AS voucher_code
      FROM point_redemptions pr
      LEFT JOIN vouchers v ON v.id = pr.voucher_id
@@ -238,76 +302,237 @@ async function get_redemptions(user_id) {
      ORDER BY pr.created_at DESC`,
     [user_id]
   );
+  return rows.map(fmt_redemption);
 }
 
-async function create_redemption(user_id, { redemption_type, points_spent, voucher_id = null, voucher_value = null, order_id = null, discount_amount = null, expires_at = null }) {
-  const result = await query(
-    `INSERT INTO point_redemptions
-       (user_id, points_spent, redemption_type, voucher_id, voucher_value, order_id, discount_amount, status, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
-    [user_id, points_spent, redemption_type, voucher_id, voucher_value, order_id, discount_amount, expires_at]
-  );
-  const rows = await query(
-    `SELECT pr.*, v.code AS voucher_code
-     FROM point_redemptions pr
-     LEFT JOIN vouchers v ON v.id = pr.voucher_id
-     WHERE pr.id = ? LIMIT 1`,
-    [result.insertId]
-  );
-  return rows[0] || null;
+async function create_redemption(user_id, { redemption_type, points, order_id } = {}) {
+  // Validasi saldo
+  const balance = await get_balance(user_id);
+  if (balance.balance < points) {
+    throw Object.assign(new Error('Saldo poin tidak cukup'), { status_code: 400 });
+  }
+
+  const POINT_TO_IDR = 10; // 1 poin = Rp 10
+  const voucher_value = points * POINT_TO_IDR;
+
+  return db.transaction(async (conn) => {
+    // Insert redemption
+    const [ins] = await conn.execute(
+      `INSERT INTO point_redemptions
+         (user_id, points_spent, redemption_type, voucher_value, order_id, status, expires_at)
+       VALUES (?, ?, ?, ?, ?, 'pending', DATE_ADD(NOW(), INTERVAL 30 DAY))`,
+      [user_id, points, redemption_type, voucher_value, order_id || null]
+    );
+
+    // Kurangi saldo
+    await conn.execute(
+      `UPDATE point_balances
+       SET balance = balance - ?, lifetime_spent = lifetime_spent + ?, updated_at = NOW()
+       WHERE user_id = ?`,
+      [points, points, user_id]
+    );
+
+    // Catat transaksi
+    const [[bal]] = await conn.execute(
+      `SELECT balance FROM point_balances WHERE user_id = ?`, [user_id]
+    );
+    await conn.execute(
+      `INSERT INTO point_transactions
+         (user_id, type, points, balance_after, note, created_at, updated_at)
+       VALUES (?, 'spend_redemption', ?, ?, ?, NOW(), NOW())`,
+      [user_id, -points, bal?.balance ?? 0, `Penukaran poin (${redemption_type})`]
+    );
+
+    // Ambil kembali data
+    const [[redemption]] = await conn.execute(
+      `SELECT pr.*, v.code AS voucher_code
+       FROM point_redemptions pr
+       LEFT JOIN vouchers v ON v.id = pr.voucher_id
+       WHERE pr.id = ? LIMIT 1`,
+      [ins.insertId]
+    );
+    return fmt_redemption(redemption);
+  });
 }
 
-// ── Referral ──────────────────────────────────────────────────────────────────
+// ─── Referral ────────────────────────────────────────────────────────────────
 
-async function get_referral_code_by_user(user_id) {
-  const rows = await query(
-    `SELECT rc.*, u.name AS referrer_name
-     FROM referral_codes rc
-     JOIN users u ON u.id = rc.user_id
-     WHERE rc.user_id = ? LIMIT 1`,
-    [user_id]
+async function get_referral_code(user_id) {
+  const [[row]] = await db.execute(
+    `SELECT * FROM referral_codes WHERE user_id = ? LIMIT 1`, [user_id]
   );
-  return rows[0] || null;
+  if (!row) return null;
+  return {
+    id:                row.id,
+    code:              row.code,
+    referrer_points:   Number(row.referrer_points),
+    referrer_discount: row.referrer_discount != null ? Number(row.referrer_discount) : null,
+    referee_points:    Number(row.referee_points),
+    referee_discount:  row.referee_discount != null ? Number(row.referee_discount) : null,
+    min_transaction:   Number(row.min_transaction),
+    total_uses:        Number(row.total_uses),
+    max_uses:          row.max_uses != null ? Number(row.max_uses) : null,
+    is_active:         Number(row.is_active),
+    created_at:        row.created_at,
+  };
 }
 
-async function create_referral_code(user_id, code) {
-  await query(
+function generate_code(user_id) {
+  const suffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `TRV${String(user_id).padStart(4, '0')}${suffix}`;
+}
+
+async function generate_referral_code(user_id) {
+  // Cek sudah ada atau belum
+  const existing = await get_referral_code(user_id);
+  if (existing) return existing;
+
+  const code = generate_code(user_id);
+  await db.execute(
     `INSERT INTO referral_codes
-       (user_id, code, referrer_points, referee_points, referee_discount, is_active)
-     VALUES (?, ?, 50, 50, null, 1)`,
+       (user_id, code, referrer_points, referrer_discount,
+        referee_points, referee_discount, min_transaction, max_uses, is_active)
+     VALUES (?, ?, 500, 25000, 250, 15000, 300000, 20, 1)`,
     [user_id, code]
   );
-  return get_referral_code_by_user(user_id);
+  return get_referral_code(user_id);
+}
+
+// Admin: semua referral codes + stats
+async function list_referral_codes({ page = 1, limit = 20 } = {}) {
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const [rows] = await db.execute(
+    `SELECT rc.*, u.name AS user_name, u.email AS user_email
+     FROM referral_codes rc
+     JOIN users u ON u.id = rc.user_id
+     ORDER BY rc.total_uses DESC
+     LIMIT ? OFFSET ?`,
+    [Number(limit), offset]
+  );
+
+  const [[countRow]] = await db.execute(`SELECT COUNT(*) AS total FROM referral_codes`);
+
+  return {
+    codes: rows.map((r) => ({
+      id:                r.id,
+      code:              r.code,
+      user_id:           r.user_id,
+      user_name:         r.user_name,
+      user_email:        r.user_email,
+      referrer_points:   Number(r.referrer_points),
+      referee_points:    Number(r.referee_points),
+      total_uses:        Number(r.total_uses),
+      max_uses:          r.max_uses != null ? Number(r.max_uses) : null,
+      is_active:         Number(r.is_active),
+      created_at:        r.created_at,
+    })),
+    total: Number(countRow.total),
+    page:  Number(page),
+    limit: Number(limit),
+  };
+}
+
+async function list_referral_usages({ page = 1, limit = 20, status } = {}) {
+  const offset = (Number(page) - 1) * Number(limit);
+  const params = [];
+  let where = 'WHERE 1=1';
+  if (status) { where += ' AND ru.status = ?'; params.push(status); }
+
+  const [rows] = await db.execute(
+    `SELECT ru.*,
+            rc.code AS referral_code,
+            ref.name AS referrer_name, ref.email AS referrer_email,
+            ree.name AS referee_name,  ree.email AS referee_email
+     FROM referral_usages ru
+     JOIN referral_codes rc ON rc.id = ru.referral_code_id
+     JOIN users ref ON ref.id = ru.referrer_id
+     JOIN users ree ON ree.id = ru.referee_id
+     ${where}
+     ORDER BY ru.created_at DESC
+     LIMIT ? OFFSET ?`,
+    [...params, Number(limit), offset]
+  );
+
+  const [[countRow]] = await db.execute(
+    `SELECT COUNT(*) AS total FROM referral_usages ru ${where}`, params
+  );
+
+  return {
+    usages: rows.map((r) => ({
+      id:                       r.id,
+      referral_code:            r.referral_code,
+      referrer_name:            r.referrer_name,
+      referrer_email:           r.referrer_email,
+      referee_name:             r.referee_name,
+      referee_email:            r.referee_email,
+      referrer_rewarded:        Number(r.referrer_rewarded),
+      referee_rewarded:         Number(r.referee_rewarded),
+      qualifying_order_amount:  r.qualifying_order_amount != null ? Number(r.qualifying_order_amount) : null,
+      status:                   r.status,
+      created_at:               r.created_at,
+    })),
+    total: Number(countRow.total),
+    page:  Number(page),
+    limit: Number(limit),
+  };
+}
+
+// Admin: summary stats referral
+async function get_referral_stats() {
+  const [[totals]] = await db.execute(
+    `SELECT
+       COUNT(*) AS total_usages,
+       SUM(referrer_rewarded) AS total_referrer_rewarded,
+       SUM(referee_rewarded) AS total_referee_rewarded,
+       SUM(qualifying_order_amount) AS total_qualifying_amount
+     FROM referral_usages WHERE status = 'rewarded'`
+  );
+  const [[codes]] = await db.execute(
+    `SELECT COUNT(*) AS total_codes, SUM(total_uses) AS total_uses FROM referral_codes`
+  );
+
+  return {
+    total_codes:               Number(codes.total_codes),
+    total_uses:                Number(codes.total_uses || 0),
+    total_rewarded_usages:     Number(totals.total_usages),
+    total_referrer_rewarded:   Number(totals.total_referrer_rewarded || 0),
+    total_referee_rewarded:    Number(totals.total_referee_rewarded || 0),
+    total_qualifying_amount:   Number(totals.total_qualifying_amount || 0),
+  };
 }
 
 async function get_referral_stats_admin({ q, page = 1, limit = 20 } = {}) {
-  const offset = (page - 1) * limit;
+  const offset = (Number(page) - 1) * Number(limit);
   const params = [];
-  let where = '';
+  let where = 'WHERE 1=1';
 
   if (q) {
-    where = `WHERE u.name LIKE ? OR u.email LIKE ? OR rc.code LIKE ?`;
+    where += ' AND (u.name LIKE ? OR u.email LIKE ? OR rc.code LIKE ?)';
     params.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
 
-  const rows = await query(
+  const [rows] = await db.execute(
     `SELECT
-       u.id AS user_id, u.name AS user_name, u.email AS user_email,
+       u.id   AS user_id,
+       u.name AS user_name,
+       u.email AS user_email,
        rc.code AS referral_code,
-       COUNT(ru.id) AS total_uses,
+       rc.total_uses,
        COUNT(CASE WHEN ru.referrer_rewarded = 1 THEN 1 END) AS total_rewarded,
-       COALESCE(SUM(CASE WHEN ru.referrer_rewarded = 1 THEN rc.referrer_points ELSE 0 END), 0) AS total_points_given
+       COALESCE(SUM(pt.points), 0) AS total_points_given
      FROM referral_codes rc
      JOIN users u ON u.id = rc.user_id
      LEFT JOIN referral_usages ru ON ru.referral_code_id = rc.id
+     LEFT JOIN point_transactions pt ON pt.user_id = rc.user_id AND pt.ref_type = 'referral'
      ${where}
-     GROUP BY rc.id, u.id, u.name, u.email, rc.code
-     ORDER BY total_uses DESC
-     LIMIT ? OFFSET ?`,
-    [...params, limit, offset]
+     GROUP BY rc.id, u.id, u.name, u.email, rc.code, rc.total_uses
+     ORDER BY rc.total_uses DESC
+     LIMIT ${Number(limit)} OFFSET ${offset}`,
+    params
   );
 
-  const count_rows = await query(
+  const [[countRow]] = await db.execute(
     `SELECT COUNT(DISTINCT rc.id) AS total
      FROM referral_codes rc
      JOIN users u ON u.id = rc.user_id
@@ -315,41 +540,109 @@ async function get_referral_stats_admin({ q, page = 1, limit = 20 } = {}) {
     params
   );
 
+  const total = Number(countRow.total);
+
   return {
-    stats: rows,
+    stats: rows.map(r => ({
+      user_id:           r.user_id,
+      user_name:         r.user_name,
+      user_email:        r.user_email,
+      referral_code:     r.referral_code,
+      total_uses:        Number(r.total_uses),
+      total_rewarded:    Number(r.total_rewarded),
+      total_points_given: Number(r.total_points_given),
+    })),
     meta: {
-      total: count_rows[0].total,
-      page,
-      limit,
-      total_pages: Math.ceil(count_rows[0].total / limit),
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      total_pages: Math.ceil(total / Number(limit)),
     },
   };
 }
 
+// ─── Promo Analytics ─────────────────────────────────────────────────────────
+
+async function get_analytics({ source_type, source_id, days = 7 } = {}) {
+  const params = [];
+  let where = `WHERE date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`;
+  params.push(Number(days));
+
+  if (source_type) { where += ' AND source_type = ?'; params.push(source_type); }
+  if (source_id)   { where += ' AND source_id = ?';   params.push(source_id); }
+
+  const [rows] = await db.execute(
+    `SELECT * FROM promo_analytics ${where} ORDER BY date ASC, source_type ASC, source_id ASC`,
+    params
+  );
+
+  return rows.map((r) => ({
+    id:                   r.id,
+    source_type:          r.source_type,
+    source_id:            r.source_id,
+    date:                 r.date,
+    impressions:          Number(r.impressions),
+    attempts:             Number(r.attempts),
+    success_count:        Number(r.success_count),
+    fail_count:           Number(r.fail_count),
+    total_discount_given: Number(r.total_discount_given),
+    total_revenue:        Number(r.total_revenue),
+  }));
+}
+
+async function get_analytics_summary({ days = 30 } = {}) {
+  const [[summary]] = await db.execute(
+    `SELECT
+       SUM(impressions)          AS total_impressions,
+       SUM(attempts)             AS total_attempts,
+       SUM(success_count)        AS total_success,
+       SUM(fail_count)           AS total_fail,
+       SUM(total_discount_given) AS total_discount,
+       SUM(total_revenue)        AS total_revenue
+     FROM promo_analytics
+     WHERE date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)`,
+    [Number(days)]
+  );
+
+  return {
+    total_impressions: Number(summary.total_impressions || 0),
+    total_attempts:    Number(summary.total_attempts    || 0),
+    total_success:     Number(summary.total_success     || 0),
+    total_fail:        Number(summary.total_fail        || 0),
+    total_discount:    Number(summary.total_discount    || 0),
+    total_revenue:     Number(summary.total_revenue     || 0),
+    conversion_rate:   summary.total_attempts > 0
+      ? Math.round((summary.total_success / summary.total_attempts) * 100)
+      : 0,
+  };
+}
+
 module.exports = {
-  // balance
-  get_point_balance,
-  upsert_point_balance,
-  // transactions
-  get_point_transactions,
-  create_point_transaction,
-  // tiers
+  // Tiers
   get_all_tiers,
-  get_all_tiers_admin,
   get_tier_by_id,
+  list_tiers_admin,
   create_tier,
   update_tier,
   delete_tier,
-  // membership
+  // User membership
   get_user_membership,
-  upsert_user_membership,
-  get_user_total_spending,
-  resolve_tier_for_user,
-  // redemptions
+  list_user_memberships,
+  // Balance
+  get_balance,
+  // Transactions
+  get_transactions,
+  // Redemptions
   get_redemptions,
   create_redemption,
-  // referral
-  get_referral_code_by_user,
-  create_referral_code,
+  // Referral
+  get_referral_code,
+  generate_referral_code,
+  list_referral_codes,
+  list_referral_usages,
+  get_referral_stats,
   get_referral_stats_admin,
+  // Analytics
+  get_analytics,
+  get_analytics_summary,
 };
