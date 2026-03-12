@@ -76,7 +76,9 @@ function generateSignature({ clientId, requestId, requestTimestamp, requestTarge
 const createTransaction = async (order) => {
   const { clientId, secretKey, baseUrl } = getDokuConfig();
   const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-  const callbackUrl = process.env.DOKU_CALLBACK_URL || `${frontendUrl}/payment/callback`;
+
+  // Arahkan user kembali ke halaman 'My Bookings' setelah checkout
+  const callbackUrl = process.env.DOKU_CALLBACK_URL || `${frontendUrl}/my-bookings`;
 
   const requestId = uuidv4();
   const requestTimestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'); // ISO 8601 UTC without milliseconds
