@@ -2,7 +2,7 @@ const PaymentSetting = require('../models/payment_setting');
 
 const updatePaymentSettings = async (req, res) => {
   try {
-    const { selectedGateway, isTestMode, xendit, midtrans } = req.body;
+    const { selectedGateway, isTestMode, xendit, doku } = req.body;
 
     const payload = {
       selected_gateway: selectedGateway,
@@ -13,29 +13,28 @@ const updatePaymentSettings = async (req, res) => {
       xendit_webhook_secret: xendit?.webhookSecret || '',
       xendit_payment_methods: xendit?.paymentMethods || [],
       
-      midtrans_merchant_id: midtrans?.merchantId || '', 
-      midtrans_server_key: midtrans?.serverKey || '',   
-      midtrans_client_key: midtrans?.clientKey || '',   
-      midtrans_webhook_url: midtrans?.webhookUrl || '', 
-      midtrans_payment_methods: midtrans?.paymentMethods || []
+      doku_client_id: doku?.clientId || '',
+      doku_secret_key: doku?.secretKey || '',
+      doku_webhook_url: doku?.webhookUrl || '',
+      doku_payment_methods: doku?.paymentMethods || [],
     };
 
     await PaymentSetting.upsert(payload);
     res.json({ error: false, message: 'Settings updated successfully!' });
   } catch (error) {
-    console.error("🔴 DATABASE ERROR:", error.message); // Ini akan memunculkan pesan error SQL di terminal backend
+    console.error("🔴 DATABASE ERROR:", error.message);
     res.status(500).json({ error: true, message: error.message });
   }
 };
+
 const getPaymentSettings = async (req, res) => {
   console.log("📥 Masuk ke Controller getPaymentSettings");
   try {
     const settings = await PaymentSetting.get();
     
-    // Kirim respon balik ke frontend!
     res.json({ 
       error: false, 
-      data: settings || {} // Kirim objek kosong jika data belum ada di DB
+      data: settings || {}
     });
   } catch (error) {
     console.error("🔴 CONTROLLER ERROR:", error);

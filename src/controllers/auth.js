@@ -54,9 +54,12 @@ function to_safe_user(user_row) {
 module.exports = {
   register: async (req, res) => {
     try {
+      console.log('\n[AUTH] === INCOMING REGISTER REQUEST ===');
+      console.log('[AUTH] Payload:', req.body);
       const { name, email, password, role, specialization, phone_number } = req.body || {};
 
       if (!name || !email || !password) {
+        console.warn('[AUTH] Missing fields! Name/Email/Password');
         return misc.response(res, 400, true, 'name, email, dan password wajib diisi');
       }
 
@@ -87,9 +90,11 @@ module.exports = {
 
       // -- Email Verification Logic --
       try {
+        console.log('[AUTH] Generating token and sending Activation Email to:', new_user.email);
         const activationToken = crypto.randomBytes(32).toString('hex');
         await save_activation_token(new_user.email, activationToken);
         await send_activation_email(new_user.email, new_user.name, activationToken, new_user.role.toLowerCase());
+        console.log('[AUTH] Activation Email sent SUCCESSFULLY via Nodemailer!');
       } catch (e) {
         console.error('[EMAIL] Failed to send activation email:', e?.message);
         // Kita biarkan pendaftaran tetap sukses meskipun gagal kirim email (bisa di-\`resend\` nanti)
@@ -255,13 +260,21 @@ module.exports = {
 
   forgot_password: async (req, res) => {
     try {
+      console.log('\n[AUTH] === INCOMING FORGOT PASSWORD REQUEST ===');
+      console.log('[AUTH] Raw Payload:', req.body);
       const { email } = req.body;
+      
+      console.log(`[AUTH] Searching database for EXACT email match: "${email}"...`);
       const user = await find_user_by_email(email);
 
       if (!user) {
+        console.warn(`[AUTH] WARNING: User with email "${email}" NOT FOUND in the local database!`);
+        console.warn('[AUTH] Silently returning 200 OK (Security Decoy) so frontend doesnt throw error.');
         // Demi keamanan, tetap beri respon sukses agar email tidak di-probe
-        return misc.response(res, 200, false, 'Jika email terdaftar, instruksi reset akan dikirim.');
+        return misc.response(res, 200, false, '[DECOY] Jika email terdaftar, instruksi reset akan dikirim.');
       }
+      
+      console.log(`[AUTH] User FOUND! Proceeding to generate reset token & send email for: ${user.name}`);
 
       const token = crypto.randomBytes(32).toString('hex');
       const expires = new Date(Date.now() + 3600000); // 1 Jam
@@ -270,10 +283,13 @@ module.exports = {
       await db.execute('DELETE FROM password_resets WHERE email = ?', [email]);
       await db.execute('INSERT INTO password_resets (email, token, expires_at) VALUES (?, ?, ?)', [email, token, expires]);
 
+      console.log('[AUTH] Sending Reset Password Email...');
       await send_reset_password_email(user.email, user.name, token, user.role.toLowerCase());
+      console.log('[AUTH] Reset Password Email sent SUCCESSFULLY via Nodemailer!');
 
-      return misc.response(res, 200, false, 'Email reset password telah dikirim');
+      return misc.response(res, 200, false, '[REAL] Email reset password telah dikirim ke inbok kamu');
     } catch (e) {
+      console.error('[AUTH] ERROR in forgot_password:', e);
       return misc.response(res, 500, true, e.message);
     }
   },

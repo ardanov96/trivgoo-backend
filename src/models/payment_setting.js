@@ -12,11 +12,11 @@ const PaymentSetting = {
         try {
           data.xendit_payment_methods = typeof data.xendit_payment_methods === 'string' 
             ? JSON.parse(data.xendit_payment_methods) : data.xendit_payment_methods;
-          data.midtrans_payment_methods = typeof data.midtrans_payment_methods === 'string' 
-            ? JSON.parse(data.midtrans_payment_methods) : data.midtrans_payment_methods;
+          data.doku_payment_methods = typeof data.doku_payment_methods === 'string' 
+            ? JSON.parse(data.doku_payment_methods) : data.doku_payment_methods;
         } catch (e) {
           data.xendit_payment_methods = [];
-          data.midtrans_payment_methods = [];
+          data.doku_payment_methods = [];
         }
         
         return data;
@@ -32,15 +32,13 @@ const PaymentSetting = {
     try {
       const existing = await PaymentSetting.get();
       
-      // Bungkus data ke dalam satu object payload
       const payload = {
         selected_gateway: data.selected_gateway,
         is_test_mode: data.is_test_mode ? 1 : 0,
-        midtrans_merchant_id: data.midtrans_merchant_id,
-        midtrans_server_key: data.midtrans_server_key,
-        midtrans_client_key: data.midtrans_client_key,
-        midtrans_webhook_url: data.midtrans_webhook_url,
-        midtrans_payment_methods: JSON.stringify(data.midtrans_payment_methods || []),
+        doku_client_id: data.doku_client_id,
+        doku_secret_key: data.doku_secret_key,
+        doku_webhook_url: data.doku_webhook_url,
+        doku_payment_methods: JSON.stringify(data.doku_payment_methods || []),
         xendit_secret_key: data.xendit_secret_key,
         xendit_webhook_url: data.xendit_webhook_url,
         xendit_webhook_secret: data.xendit_webhook_secret,
@@ -49,7 +47,6 @@ const PaymentSetting = {
       };
 
       if (existing) {
-        // Jauh lebih aman: SET ? akan otomatis memetakan key object ke kolom DB
         return await db.query("UPDATE payment_settings SET ? WHERE id = ?", [payload, existing.id]);
       } else {
         return await db.query("INSERT INTO payment_settings SET ?", [payload]);
