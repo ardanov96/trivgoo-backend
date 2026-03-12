@@ -5,7 +5,7 @@ const { execute } = require('../configs/db');
 
 /**
  * POST /api/v1/payment/create-payment
- * Buat transaksi Midtrans Snap dan simpan ke DB.
+ * Buat transaksi DOKU Checkout dan simpan ke DB.
  */
 const createPayment = async (req, res) => {
   try {
@@ -17,16 +17,22 @@ const createPayment = async (req, res) => {
       return misc.response(res, 400, true, 'Missing required fields: id, amount, name, email');
     }
 
-    // Buat transaksi Midtrans Snap
-    const transaction = await payment_service.createTransaction({ id, amount, name, email });
+    // Buat transaksi DOKU Checkout
+    const transaction = await payment_service.createTransaction({
+      id,
+      amount,
+      name,
+      email,
+      product_name,
+      quantity,
+    });
 
-    // Simpan ke tabel bookings (dengan user_id, product_id, dan payment_gateway)
+    // Simpan ke tabel bookings
     await execute(
       `INSERT INTO bookings 
-        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, status, payment_token, payment_url, payment_gateway, payment_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), 'PENDING', ?, ?, 'midtrans', 'PENDING')
+        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, status, payment_url, payment_gateway, payment_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), 'PENDING', ?, 'doku', 'PENDING')
        ON DUPLICATE KEY UPDATE
-        payment_token = VALUES(payment_token),
         payment_url   = VALUES(payment_url),
         updated_at    = NOW()`,
       [
@@ -37,25 +43,29 @@ const createPayment = async (req, res) => {
         product_name || '-',
         quantity || 1,
         amount,
-        transaction.token,
-        transaction.redirect_url || null,
+        transaction.payment_url || null,
       ]
     );
 
-    // Simpan ke tabel payment_transactions (dengan user_id)
+    // Simpan ke tabel payment_transactions
     await execute(
       `INSERT INTO payment_transactions
-        (booking_id, user_id, gateway, external_id, amount, currency, status, gateway_response)
-       SELECT id, ?, 'midtrans', ?, ?, 'IDR', 'PENDING', ?
+        (booking_id, user_id, gateway, external_id, amount, currency, status, payment_url, gateway_response)
+       SELECT id, ?, 'doku', ?, ?, 'IDR', 'PENDING', ?, ?
        FROM bookings WHERE external_id = ? LIMIT 1`,
-      [user_id || null, id, amount, JSON.stringify(transaction), id]
+      [
+        user_id || null,
+        id,
+        amount,
+        transaction.payment_url || null,
+        JSON.stringify(transaction),
+        id,
+      ]
     );
 
-    return misc.response(res, 200, false, 'Snap token created successfully', {
-      token: transaction.token,
-      redirect_url: transaction.redirect_url,
-      is_production: transaction.is_production,
-      client_key: transaction.client_key,
+    return misc.response(res, 200, false, 'Payment created successfully', {
+      payment_url: transaction.payment_url,
+      invoice_number: transaction.invoice_number,
     });
 
   } catch (error) {
@@ -66,7 +76,7 @@ const createPayment = async (req, res) => {
 
 /**
  * POST /api/v1/payment/notification
- * Handle webhook notifikasi dari Midtrans (harus public, tidak perlu auth).
+ * Handle webhook notifikasi dari DOKU (harus public, tidak perlu auth).
  */
 const handleNotification = async (req, res) => {
   try {
@@ -76,52 +86,52 @@ const handleNotification = async (req, res) => {
     await execute(
       `INSERT INTO webhook_logs 
         (gateway, event_type, external_id, transaction_id, payload, signature_verified, status)
-       VALUES ('midtrans', ?, ?, ?, ?, false, 'pending')`,
+       VALUES ('doku', ?, ?, ?, ?, false, 'pending')`,
       [
-        notification.transaction_status || 'unknown',
-        notification.order_id || null,
-        notification.transaction_id || null,
+        notification?.transaction?.status || notification?.service?.status || 'unknown',
+        notification?.order?.invoice_number || null,
+        notification?.transaction?.id || null,
         JSON.stringify(notification),
       ]
     );
 
-    // Verifikasi signature
-    await payment_service.handleNotification(notification);
+    // Verifikasi signature & parse status
+    const result = await payment_service.handleNotification(notification, req.headers);
 
-    // Map status Midtrans ke status internal
+    // Map status DOKU ke status internal
     const statusMap = {
-      settlement: 'PAID',
-      capture: 'PAID',
-      pending: 'PENDING',
-      deny: 'FAILED',
-      expire: 'EXPIRED',
-      cancel: 'CANCELLED',
-      refund: 'REFUNDED',
-      chargeback: 'FAILED',
+      SUCCESS: 'PAID',
+      PAID: 'PAID',
+      PENDING: 'PENDING',
+      FAILED: 'FAILED',
+      EXPIRED: 'EXPIRED',
+      CANCELLED: 'CANCELLED',
+      REFUNDED: 'REFUNDED',
+      VOIDED: 'CANCELLED',
     };
-    const newStatus = statusMap[notification.transaction_status] || 'PENDING';
+    const rawStatus = (result.transaction_status || '').toUpperCase();
+    const newStatus = statusMap[rawStatus] || 'PENDING';
 
     // Update bookings
     await execute(
-      `UPDATE bookings SET status = ?, updated_at = NOW() WHERE external_id = ?`,
-      [newStatus === 'PAID' ? 'CONFIRMED' : newStatus, notification.order_id]
+      `UPDATE bookings SET status = ?, payment_status = ?, updated_at = NOW() WHERE external_id = ?`,
+      [newStatus === 'PAID' ? 'CONFIRMED' : newStatus, newStatus, result.invoice_number]
     );
 
     // Update payment_transactions
     await execute(
       `UPDATE payment_transactions
        SET status = ?, gateway_transaction_id = ?, payment_method = ?,
-           fraud_status = ?, paid_at = IF(? = 'PAID', NOW(), paid_at),
+           paid_at = IF(? = 'PAID', NOW(), paid_at),
            gateway_response = ?, updated_at = NOW()
-       WHERE external_id = ? AND gateway = 'midtrans'`,
+       WHERE external_id = ? AND gateway = 'doku'`,
       [
         newStatus,
-        notification.transaction_id || null,
-        notification.payment_type || null,
-        notification.fraud_status || null,
+        notification?.transaction?.id || null,
+        notification?.channel?.id || notification?.payment_method || null,
         newStatus,
         JSON.stringify(notification),
-        notification.order_id,
+        result.invoice_number,
       ]
     );
 
@@ -129,9 +139,9 @@ const handleNotification = async (req, res) => {
     await execute(
       `UPDATE webhook_logs 
        SET status = 'processed', signature_verified = true, processed_at = NOW()
-       WHERE external_id = ? AND gateway = 'midtrans' 
+       WHERE external_id = ? AND gateway = 'doku' 
        ORDER BY id DESC LIMIT 1`,
-      [notification.order_id]
+      [result.invoice_number]
     );
 
     return res.json({ success: true, message: 'Notification processed' });
@@ -140,13 +150,14 @@ const handleNotification = async (req, res) => {
     console.error('[PAYMENT] handleNotification error:', error.message);
 
     // Update webhook log ke failed
-    if (req.body?.order_id) {
+    const invoiceNumber = req.body?.order?.invoice_number;
+    if (invoiceNumber) {
       await execute(
         `UPDATE webhook_logs 
          SET status = 'failed', error_message = ?, processed_at = NOW()
-         WHERE external_id = ? AND gateway = 'midtrans' 
+         WHERE external_id = ? AND gateway = 'doku' 
          ORDER BY id DESC LIMIT 1`,
-        [error.message, req.body.order_id]
+        [error.message, invoiceNumber]
       ).catch(() => { });
     }
 
