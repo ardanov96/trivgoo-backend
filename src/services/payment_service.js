@@ -79,7 +79,7 @@ const createTransaction = async (order) => {
   const callbackUrl = process.env.DOKU_CALLBACK_URL || `${frontendUrl}/payment/callback`;
 
   const requestId = uuidv4();
-  const requestTimestamp = new Date().toISOString(); // DOKU requires full ISO 8601 with milliseconds
+  const requestTimestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'); // ISO 8601 UTC without milliseconds
   const requestTarget = '/checkout/v1/payment';
 
   const requestBody = {
@@ -100,8 +100,8 @@ const createTransaction = async (order) => {
       payment_due_date: 60, // 60 menit
     },
     customer: {
-      name: order.name,
-      email: order.email,
+      name: order.name || 'Customer Name',
+      email: order.email || 'customer@example.com',
     },
   };
 

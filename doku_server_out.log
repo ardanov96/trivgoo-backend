@@ -1,0 +1,84 @@
+[ENV] Loaded: .env.development
+[ENV] NODE_ENV=development, PORT=4001, DB=trivgoo_development
+--- [BOOT] Registering Routes Sync ---
+Checking routerNav...
+[INIT] Checking Database Connection...
+✅ Database Connected.
+
+	*** Server listening on PORT 4001 (development) ***
+
+	Cookie mode  : sameSite=lax, secure=false
+	Session store: MySQL (trivgoo_development)
+
+[DOKU] Creating transaction: {
+  invoice_number: 'test-006',
+  amount: 50000,
+  baseUrl: 'https://api-sandbox.doku.com',
+  requestId: '93d77f32-2898-471c-a1e7-8101f5690862',
+  requestTimestamp: '2026-03-12T05:50:26.354Z',
+  clientId: 'BRN-0258-1773283766837'
+}
+[DOKU] Signature component: {"digest":"Dl1q+r8yTDCDzddsR/QlN3lqmOB8IX2I1hG+BthofuI=","signatureResult":"HMACSHA256=LQngFre61s/YAIsoEWI0aQOlPSm4J3rB3nScWjCkxCk="}
+[0mPOST /api/v1/payment/create-payment [31m500[0m 285.392 ms - 80[0m
+[DOKU] Creating transaction: {
+  invoice_number: 'test-005',
+  amount: 50000,
+  baseUrl: 'https://api-sandbox.doku.com',
+  requestId: 'e46a7ea7-6d53-4ff4-a6c8-eaf056c525d8',
+  requestTimestamp: '2026-03-12T05:52:06.086Z',
+  clientId: 'BRN-0258-1773283766837'
+}
+[DOKU] Signature component: {"digest":"dlGObrZZlrtAr3j9DVHSUgMthyLs7eqs/HnjWTydPmw=","signatureResult":"HMACSHA256=XfAkGdgnwgUIzoXPgI44h5s72o573qk0biUSpE0kjnI="}
+[0mPOST /api/v1/payment/create-payment [31m500[0m 267.477 ms - 80[0m
+[DOKU] Creating transaction: {
+  invoice_number: 'test-005',
+  amount: 50000,
+  baseUrl: 'https://api-sandbox.doku.com',
+  requestId: 'b0c5bc91-39b7-4326-a7d6-07a2ef2bacad',
+  requestTimestamp: '2026-03-12T05:52:51.186Z',
+  clientId: 'BRN-0258-1773283766837'
+}
+[DOKU] Signature component: {"digest":"dlGObrZZlrtAr3j9DVHSUgMthyLs7eqs/HnjWTydPmw=","signatureResult":"HMACSHA256=UOe0hpztpiLHEVWgCDvAHRbr/RhmqueMgKHXYJiTxTQ="}
+[0mPOST /api/v1/payment/create-payment [31m500[0m 178.328 ms - 80[0m
+[0mPOST /api/v1/payment/create-payment [33m400[0m 2.679 ms - 100[0m
+[0mPOST /api/v1/payment/create-payment [33m400[0m 0.760 ms - 100[0m
+[DOKU] Creating transaction: {
+  invoice_number: 'ORD-1001',
+  amount: 75000,
+  baseUrl: 'https://api-sandbox.doku.com',
+  requestId: '15062d35-15ea-4698-8252-0df38fcecbb3',
+  requestTimestamp: '2026-03-12T06:01:56.926Z',
+  clientId: 'BRN-0258-1773283766837'
+}
+[DOKU] Signature component: {"digest":"0WzvcSJSnYIodDGFrZiFTxiTH3FRyYIr/OhQGhtTfYg=","signatureResult":"HMACSHA256=gn7EDzGmme7aFkZ8gQTgBocbYqnYUYKwx1lzByl3tDg="}
+[0mPOST /api/v1/payment/create-payment [31m500[0m 333.240 ms - 80[0m
+[DOKU] Creating transaction: {
+  invoice_number: 'ORD-9201',
+  amount: 75000,
+  baseUrl: 'https://api-sandbox.doku.com',
+  requestId: '37fb96ed-d995-4e78-a642-18ef7c97cf5e',
+  requestTimestamp: '2026-03-12T06:03:12.713Z',
+  clientId: 'BRN-0258-1773283766837'
+}
+[DOKU] Signature component: {"digest":"Rg4sPbvhZe5+yZA9yEvYAPku/tUHB7Ee1yk/3MzIAHo=","signatureResult":"HMACSHA256=AquQ8X4brcD5AdfIRPU+yEq1S4PJEwQ+4xsYMHSi9n4="}
+[0mPOST /api/v1/payment/create-payment [31m500[0m 214.521 ms - 80[0m
+[DOKU] Creating transaction: {
+  invoice_number: 'ORD-1002',
+  amount: 75000,
+  baseUrl: 'https://api-sandbox.doku.com',
+  requestId: '6d6fc069-50da-48f8-b26d-e5d1d62ba99d',
+  requestTimestamp: '2026-03-12T06:05:27.569Z',
+  clientId: 'BRN-0258-1773283766837'
+}
+[DOKU] Signature component: {"digest":"WmDIoy0Tdvv/HAq65RYV6VLL4bnm+0ShzC5pP1FcIWA=","signatureResult":"HMACSHA256=b9hFlEqBMnQjnZwtXVljgh5rF92p5iwgNXdRFdMGtIY="}
+[0mPOST /api/v1/payment/create-payment [31m500[0m 179.074 ms - 80[0m
+[DOKU] Creating transaction: {
+  invoice_number: 'ORD-1002',
+  amount: 75000,
+  baseUrl: 'https://api-sandbox.doku.com',
+  requestId: '91996298-56b4-4488-b29f-d551129213a6',
+  requestTimestamp: '2026-03-12T06:06:00.487Z',
+  clientId: 'BRN-0258-1773283766837'
+}
+[DOKU] Signature component: {"digest":"WmDIoy0Tdvv/HAq65RYV6VLL4bnm+0ShzC5pP1FcIWA=","signatureResult":"HMACSHA256=aCr9sWCWonZQS8wXEDvkfMbEUCMfDecE5Ah2sh3r3qA="}
+[0mPOST /api/v1/payment/create-payment [31m500[0m 195.461 ms - 80[0m
