@@ -106,7 +106,7 @@ async function createDokuTransaction(order, config) {
         quantity: Number(order.quantity) || 1
       }]
     },
-    payment: { payment_due_date: 60 },
+    payment: { payment_due_date: 1440 },
     customer: {
       name: (order.name || 'Customer').substring(0, 255),
       email: order.email || 'customer@example.com'
@@ -138,7 +138,11 @@ async function createDokuTransaction(order, config) {
       throw new Error('DOKU tidak mengembalikan payment URL: ' + JSON.stringify(response.data));
 
     console.log('[DOKU Jokul] ✅ Checkout created:', order.id, '->', paymentUrl);
-    return { payment_url: paymentUrl, invoice_number: order.id };
+    return { 
+      payment_url: paymentUrl, 
+      invoice_number: order.id,
+      expired_at: expiredAt
+    };
 
   } catch (err) {
     if (err.response) {

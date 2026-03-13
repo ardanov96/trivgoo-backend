@@ -60,30 +60,37 @@ const getMyBookings = async (req, res) => {
     }
 
     const [rows] = await db.query(
-      `SELECT 
-        b.id, 
-        b.user_id as userId, 
-        b.product_id as productId, 
-        b.product_name as productName, 
-        b.user_name as userName, 
-        b.quantity, 
-        b.total_price as totalPrice, 
-        b.date, 
-        b.status,
-        p.image_url as productImage
-      FROM bookings b
-      LEFT JOIN products p ON b.product_id = p.id
-      WHERE b.user_id = ?
-      ORDER BY b.created_at DESC`,
-      [userId]
-    );
+  `SELECT
+    b.id,
+    b.user_id as userId,
+    b.product_id as productId,
+    b.product_name as productName,
+    b.user_name as userName,
+    b.quantity,
+    b.total_price as totalPrice,
+    b.date,
+    b.status,
+    b.payment_url as paymentUrl,
+    b.payment_status as paymentStatus,
+    b.created_at as createdAt,
+    p.image_url as productImage
+  FROM bookings b
+  LEFT JOIN products p ON b.product_id = p.id
+  WHERE b.user_id = ?
+  ORDER BY b.created_at DESC`,
+  [userId]
+);
 
-    const formattedRows = rows.map(row => ({
-      ...row,
-      date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
-      totalPrice: parseFloat(row.totalPrice),
-      productImage: row.productImage || null,
-    }));
+const formattedRows = rows.map(row => ({
+  ...row,
+  date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
+  totalPrice: parseFloat(row.totalPrice),
+  productImage: row.productImage || null,
+  // DOKU expired 24 jam dari created_at
+  paymentExpiredAt: row.createdAt
+    ? new Date(new Date(row.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString()
+    : null,
+}));
 
     return response(res, 200, false, 'My bookings fetched successfully', formattedRows);
   } catch (error) {
