@@ -5,61 +5,123 @@ const { execute } = require('../configs/db');
 
 /**
  * POST /api/v1/payment/create-payment
- * Buat transaksi DOKU Checkout dan simpan ke DB.
+ * Terima booking_id dari frontend, lookup data dari DB, lalu buat transaksi.
  */
 const createPayment = async (req, res) => {
   try {
-    const { id, amount, name, email, product_name, quantity, product_id } = req.body;
-    // Use session user_id (reliable) instead of frontend-submitted user_id
     const user_id = req.session?.user?.id || req.body.user_id || null;
 
-    if (!amount || !id || !name || !email) {
-      return misc.response(res, 400, true, 'Missing required fields: id, amount, name, email');
+    // ── Support 2 flow:
+    // 1. Frontend kirim booking_id → lookup dari DB (flow baru, recommended)
+    // 2. Frontend kirim id/amount/name/email langsung → flow lama (backward compat)
+    let order = {};
+
+    if (req.body.booking_id) {
+      // Flow baru: lookup booking dari DB
+      const booking_id = req.body.booking_id;
+
+      const bookingResult = await execute(
+        `SELECT b.*, u.name as user_name, u.email as user_email
+         FROM bookings b
+         LEFT JOIN users u ON b.user_id = u.id
+         WHERE b.id = ?
+         LIMIT 1`,
+        [booking_id]
+      );
+      // execute() bisa return [rows] atau rows langsung tergantung implementasi
+      const rows = Array.isArray(bookingResult[0]) ? bookingResult[0] : bookingResult;
+
+      if (!rows || rows.length === 0) {
+        return misc.response(res, 404, true, 'Booking tidak ditemukan');
+      }
+
+      const booking = rows[0];
+
+      // Cek booking milik user ini (kalau ada session)
+      if (user_id && booking.user_id && String(booking.user_id) !== String(user_id)) {
+        return misc.response(res, 403, true, 'Tidak punya akses ke booking ini');
+      }
+
+      // Kalau sudah punya payment_url aktif, return langsung
+      if (booking.payment_url && booking.payment_status === 'PENDING') {
+        return misc.response(res, 200, false, 'Payment URL already exists', {
+          payment_url: booking.payment_url,
+          invoice_number: booking.external_id,
+        });
+      }
+
+      order = {
+        id: booking.external_id || ('TRV-' + booking_id + '-' + Date.now()),
+        amount: booking.total_price || booking.total_amount || booking.amount,
+        name: booking.user_name || booking.customer_name || 'Customer',
+        email: booking.user_email || booking.email || 'customer@example.com',
+        product_name: booking.product_name || booking.title || 'Trivgoo Booking',
+        quantity: booking.quantity || 1,
+        product_id: booking.product_id,
+        booking_id,
+      };
+
+    } else {
+      // Flow lama: frontend kirim semua field langsung
+      const { id, amount, name, email, product_name, quantity, product_id } = req.body;
+
+      if (!amount || !id || !name || !email) {
+        return misc.response(res, 400, true, 'Missing required fields: id, amount, name, email');
+      }
+
+      order = { id, amount, name, email, product_name, quantity, product_id };
     }
 
-    // Buat transaksi DOKU Checkout
-    const transaction = await payment_service.createTransaction({
-      id,
-      amount,
-      name,
-      email,
-      product_name,
-      quantity,
+    // Validasi amount
+    if (!order.amount || isNaN(Number(order.amount)) || Number(order.amount) <= 0) {
+      return misc.response(res, 400, true, 'Amount tidak valid: ' + order.amount);
+    }
+
+    console.log('[PAYMENT] Creating transaction for order:', {
+      id: order.id,
+      amount: order.amount,
+      name: order.name,
     });
 
-    // Simpan ke tabel bookings
+    // Buat transaksi ke payment gateway
+    const transaction = await payment_service.createTransaction(order);
+
+    // Upsert bookings
     await execute(
       `INSERT INTO bookings 
         (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, status, payment_url, payment_gateway, payment_status)
        VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), 'PENDING', ?, 'doku', 'PENDING')
        ON DUPLICATE KEY UPDATE
-        payment_url   = VALUES(payment_url),
-        updated_at    = NOW()`,
+        payment_url = VALUES(payment_url),
+        updated_at  = NOW()`,
       [
-        id,
+        order.id,
         user_id || null,
-        product_id || null,
-        name,
-        product_name || '-',
-        quantity || 1,
-        amount,
+        order.product_id || null,
+        order.name,
+        order.product_name || '-',
+        order.quantity || 1,
+        order.amount,
         transaction.payment_url || null,
       ]
     );
 
-    // Simpan ke tabel payment_transactions
+    // Simpan ke payment_transactions
     await execute(
       `INSERT INTO payment_transactions
         (booking_id, user_id, gateway, external_id, amount, currency, status, payment_url, gateway_response)
        SELECT id, ?, 'doku', ?, ?, 'IDR', 'PENDING', ?, ?
-       FROM bookings WHERE external_id = ? LIMIT 1`,
+       FROM bookings WHERE external_id = ? LIMIT 1
+       ON DUPLICATE KEY UPDATE
+        payment_url = VALUES(payment_url),
+        updated_at  = NOW()`,
       [
         user_id || null,
-        id,
-        amount,
+        order.id,
+        order.amount,
         transaction.payment_url || null,
         JSON.stringify(transaction),
-        id,
+        order.id,
       ]
     );
 
@@ -76,13 +138,13 @@ const createPayment = async (req, res) => {
 
 /**
  * POST /api/v1/payment/notification
- * Handle webhook notifikasi dari DOKU (harus public, tidak perlu auth).
+ * Handle webhook notifikasi dari DOKU (public, tidak perlu auth).
  */
 const handleNotification = async (req, res) => {
   try {
     const notification = req.body;
 
-    // Log webhook sebelum proses apapun
+    // Log webhook
     await execute(
       `INSERT INTO webhook_logs 
         (gateway, event_type, external_id, transaction_id, payload, signature_verified, status)
@@ -95,30 +157,21 @@ const handleNotification = async (req, res) => {
       ]
     );
 
-    // Verifikasi signature & parse status
     const result = await payment_service.handleNotification(notification, req.headers);
 
-    // Map status DOKU ke status internal
     const statusMap = {
-      SUCCESS: 'PAID',
-      PAID: 'PAID',
-      PENDING: 'PENDING',
-      FAILED: 'FAILED',
-      EXPIRED: 'EXPIRED',
-      CANCELLED: 'CANCELLED',
-      REFUNDED: 'REFUNDED',
-      VOIDED: 'CANCELLED',
+      SUCCESS: 'PAID', PAID: 'PAID', PENDING: 'PENDING',
+      FAILED: 'FAILED', EXPIRED: 'EXPIRED', CANCELLED: 'CANCELLED',
+      REFUNDED: 'REFUNDED', VOIDED: 'CANCELLED',
     };
     const rawStatus = (result.transaction_status || '').toUpperCase();
     const newStatus = statusMap[rawStatus] || 'PENDING';
 
-    // Update bookings
     await execute(
       `UPDATE bookings SET status = ?, payment_status = ?, updated_at = NOW() WHERE external_id = ?`,
       [newStatus === 'PAID' ? 'CONFIRMED' : newStatus, newStatus, result.invoice_number]
     );
 
-    // Update payment_transactions
     await execute(
       `UPDATE payment_transactions
        SET status = ?, gateway_transaction_id = ?, payment_method = ?,
@@ -135,12 +188,10 @@ const handleNotification = async (req, res) => {
       ]
     );
 
-    // Update webhook log ke processed
     await execute(
       `UPDATE webhook_logs 
        SET status = 'processed', signature_verified = true, processed_at = NOW()
-       WHERE external_id = ? AND gateway = 'doku' 
-       ORDER BY id DESC LIMIT 1`,
+       WHERE external_id = ? AND gateway = 'doku' ORDER BY id DESC LIMIT 1`,
       [result.invoice_number]
     );
 
@@ -149,16 +200,13 @@ const handleNotification = async (req, res) => {
   } catch (error) {
     console.error('[PAYMENT] handleNotification error:', error.message);
 
-    // Update webhook log ke failed
     const invoiceNumber = req.body?.order?.invoice_number;
     if (invoiceNumber) {
       await execute(
-        `UPDATE webhook_logs 
-         SET status = 'failed', error_message = ?, processed_at = NOW()
-         WHERE external_id = ? AND gateway = 'doku' 
-         ORDER BY id DESC LIMIT 1`,
+        `UPDATE webhook_logs SET status = 'failed', error_message = ?, processed_at = NOW()
+         WHERE external_id = ? AND gateway = 'doku' ORDER BY id DESC LIMIT 1`,
         [error.message, invoiceNumber]
-      ).catch(() => { });
+      ).catch(() => {});
     }
 
     return res.status(500).json({ success: false, message: error.message });

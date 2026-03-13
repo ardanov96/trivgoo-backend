@@ -1,224 +1,270 @@
 // src/services/payment_service.js
+// DOKU Jokul (non-SNAP) + Xendit support
+// Credentials dibaca dari DB (payment_settings)
+
 const axios = require('axios');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
+const db = require('../configs/db');
 
-/**
- * Ambil konfigurasi DOKU dari environment variables.
- */
-function getDokuConfig() {
-  const clientId = process.env.DOKU_CLIENT_ID;
-  const secretKey = process.env.DOKU_SECRET_KEY;
-  const baseUrl = process.env.DOKU_BASE_URL || 'https://api-sandbox.doku.com';
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
-  if (!clientId || !secretKey) {
-    throw new Error('DOKU credentials belum dikonfigurasi. Set DOKU_CLIENT_ID dan DOKU_SECRET_KEY di .env');
+function getTimestampUTC() {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function generateJokulDigest(bodyString) {
+  const raw = crypto.createHash('sha256').update(bodyString, 'utf-8').digest();
+  return Buffer.from(raw).toString('base64');
+}
+
+function generateJokulSignature(clientId, requestId, timestamp, requestTarget, digest, secretKey) {
+  let component = 'Client-Id:' + clientId;
+  component += '\nRequest-Id:' + requestId;
+  component += '\nRequest-Timestamp:' + timestamp;
+  component += '\nRequest-Target:' + requestTarget;
+  if (digest) component += '\nDigest:' + digest;
+
+  const hmacRaw = crypto.createHmac('sha256', secretKey).update(component).digest();
+  return 'HMACSHA256=' + Buffer.from(hmacRaw).toString('base64');
+}
+
+// ─── DB Config ───────────────────────────────────────────────────────────────
+
+async function getActiveGatewayConfig() {
+  let rows;
+  try {
+    [rows] = await db.query('SELECT * FROM payment_settings WHERE is_active = 1 LIMIT 1');
+  } catch (e) {
+    [rows] = await db.query('SELECT * FROM payment_settings LIMIT 1');
   }
 
-  return { clientId, secretKey, baseUrl };
+  if (!rows || rows.length === 0)
+    throw new Error('Payment settings tidak ditemukan. Konfigurasi di Admin -> Payment Settings.');
+
+  const s = rows[0];
+  const gateway = s.selected_gateway;
+
+  if (gateway === 'doku') {
+    const clientId = s.doku_client_id || process.env.DOKU_CLIENT_ID;
+    const secretKey = s.doku_secret_key || process.env.DOKU_SECRET_KEY;
+    const isProduction = process.env.NODE_ENV === 'production';
+    const baseUrl = isProduction
+      ? 'https://api.doku.com'
+      : (process.env.DOKU_BASE_URL || 'https://api-sandbox.doku.com');
+
+    if (!clientId || !secretKey)
+      throw new Error('DOKU credentials belum dikonfigurasi di Admin -> Payment Settings.');
+
+    return { gateway: 'doku', clientId, secretKey, baseUrl, settings: s };
+  }
+
+  if (gateway === 'xendit') {
+    const secretKey = s.xendit_secret_key || process.env.XENDIT_SECRET_KEY;
+    if (!secretKey) throw new Error('Xendit Secret Key belum dikonfigurasi.');
+    return { gateway: 'xendit', secretKey, settings: s };
+  }
+
+  throw new Error('Gateway tidak dikenali: ' + gateway);
 }
 
-/**
- * Generate Digest (SHA-256 hash dari request body).
- * @param {string} jsonBody - JSON string dari request body
- * @returns {string} Base64 encoded SHA-256 hash
- */
-function generateDigest(jsonBody) {
-  return crypto
-    .createHash('sha256')
-    .update(jsonBody, 'utf8')
-    .digest('base64');
-}
+// ─── DOKU Jokul Checkout ─────────────────────────────────────────────────────
 
-/**
- * Generate Signature untuk DOKU API.
- *
- * Format: HMAC-SHA256(Client-Id + ":" + Request-Id + ":" + Request-Timestamp + ":" + Request-Target + ":" + Digest)
- *
- * @param {object} params
- * @param {string} params.clientId
- * @param {string} params.requestId
- * @param {string} params.requestTimestamp
- * @param {string} params.requestTarget - e.g. "/checkout/v1/payment"
- * @param {string} params.secretKey
- * @param {string} params.body - JSON string body
- * @returns {string} HMAC-SHA256 signature (hex)
- */
-function generateSignature({ clientId, requestId, requestTimestamp, requestTarget, secretKey, body }) {
-  const digest = generateDigest(body);
+async function createDokuTransaction(order, config) {
+  const { clientId, secretKey, baseUrl } = config;
 
-  const componentSignature =
-    'Client-Id:' + clientId + '\n' +
-    'Request-Id:' + requestId + '\n' +
-    'Request-Timestamp:' + requestTimestamp + '\n' +
-    'Request-Target:' + requestTarget + '\n' +
-    'Digest:' + digest;
+  // MOCK mode
+  if (process.env.DOKU_MOCK === 'true') {
+    console.log('[DOKU MOCK] Returning fake payment URL');
+    await new Promise(r => setTimeout(r, 300));
+    return {
+      payment_url: (process.env.FRONTEND_URL || 'http://localhost:3000') +
+        '/payment/result?invoice=' + order.id + '&status=SUCCESS&mock=true',
+      invoice_number: order.id
+    };
+  }
 
-  const signature = crypto
-    .createHmac('sha256', secretKey)
-    .update(componentSignature)
-    .digest('base64');
-
-  return 'HMACSHA256=' + signature;
-}
-
-/**
- * Buat transaksi DOKU Checkout.
- * Return payment_url agar frontend bisa redirect customer.
- *
- * @param {object} order
- * @param {string} order.id - Invoice/external ID
- * @param {number} order.amount - Total amount
- * @param {string} order.name - Customer name
- * @param {string} order.email - Customer email
- * @returns {Promise<{payment_url: string, invoice_number: string}>}
- */
-const createTransaction = async (order) => {
-  const { clientId, secretKey, baseUrl } = getDokuConfig();
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-  const callbackUrl = process.env.DOKU_CALLBACK_URL || `${frontendUrl}/payment/callback`;
+  const amount = Math.round(Number(order.amount));
+  if (isNaN(amount) || amount <= 0)
+    throw new Error('Amount tidak valid: ' + order.amount);
 
   const requestId = uuidv4();
-  const requestTimestamp = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'); // ISO 8601 UTC without milliseconds
+  const timestamp = getTimestampUTC();
   const requestTarget = '/checkout/v1/payment';
+  const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const callbackUrl = frontendBase + '/payment/result';
 
   const requestBody = {
     order: {
-      amount: order.amount,
+      amount,
       invoice_number: order.id,
       currency: 'IDR',
       callback_url: callbackUrl,
-      line_items: [
-        {
-          name: order.product_name || 'Trivgoo Booking',
-          price: order.amount,
-          quantity: order.quantity || 1,
-        },
-      ],
+      line_items: [{
+        name: (order.product_name || 'Trivgoo Booking').substring(0, 255),
+        price: Math.round(amount / (Number(order.quantity) || 1)),
+        quantity: Number(order.quantity) || 1
+      }]
     },
-    payment: {
-      payment_due_date: 60, // 60 menit
-    },
+    payment: { payment_due_date: 60 },
     customer: {
-      name: order.name || 'Customer Name',
-      email: order.email || 'customer@example.com',
-    },
+      name: (order.name || 'Customer').substring(0, 255),
+      email: order.email || 'customer@example.com'
+    }
   };
 
   const bodyString = JSON.stringify(requestBody);
+  const digest = generateJokulDigest(bodyString);
+  const signature = generateJokulSignature(clientId, requestId, timestamp, requestTarget, digest, secretKey);
 
-  const signature = generateSignature({
-    clientId,
-    requestId,
-    requestTimestamp,
-    requestTarget,
-    secretKey,
-    body: bodyString,
-  });
-
-  const headers = {
-    'Client-Id': clientId,
-    'Request-Id': requestId,
-    'Request-Timestamp': requestTimestamp,
-    'Signature': signature,
-    'Content-Type': 'application/json',
-  };
-
-  console.log('[DOKU] Creating transaction:', {
-    invoice_number: order.id,
-    amount: order.amount,
-    baseUrl,
-    requestId,
-    requestTimestamp,
-    clientId,
-  });
-  console.log('[DOKU] Signature component:', JSON.stringify({
-    digest: crypto.createHash('sha256').update(bodyString, 'utf8').digest('base64'),
-    signatureResult: signature,
-  }));
+  console.log('[DOKU Jokul] Creating checkout:', { invoice_number: order.id, amount, requestId });
 
   try {
-    // IMPORTANT: send bodyString (not object) to ensure the exact same
-    // JSON used for digest generation is sent to DOKU
-    const response = await axios.post(
-      `${baseUrl}${requestTarget}`,
-      bodyString,
-      { headers }
-    );
-
-    const paymentUrl = response.data?.response?.payment?.url;
-
-    if (!paymentUrl) {
-      console.error('[DOKU] No payment URL in response:', JSON.stringify(response.data, null, 2));
-      throw new Error('DOKU tidak mengembalikan payment URL.');
-    }
-
-    console.log('[DOKU] Transaction created successfully:', {
-      payment_url: paymentUrl ? '✓' : '✗',
-      invoice_number: order.id,
+    const response = await axios.post(baseUrl + requestTarget, requestBody, {
+      headers: {
+        'Client-Id': clientId,
+        'Request-Id': requestId,
+        'Request-Timestamp': timestamp,
+        'Signature': signature,
+        'Content-Type': 'application/json'
+      }
     });
 
-    return {
-      payment_url: paymentUrl,
-      invoice_number: order.id,
-    };
+    const paymentUrl = response.data?.response?.payment?.url ||
+      response.data?.payment?.url ||
+      response.data?.url;
+
+    if (!paymentUrl)
+      throw new Error('DOKU tidak mengembalikan payment URL: ' + JSON.stringify(response.data));
+
+    console.log('[DOKU Jokul] ✅ Checkout created:', order.id, '->', paymentUrl);
+    return { payment_url: paymentUrl, invoice_number: order.id };
+
   } catch (err) {
-    const errData = err?.response?.data || err?.message || err;
-    console.error('[DOKU] createTransaction error:', JSON.stringify(errData, null, 2));
-    throw new Error(
-      typeof errData === 'string'
-        ? errData
-        : errData?.error?.message || 'Gagal membuat transaksi DOKU'
-    );
+    if (err.response) {
+      const e = err.response.data;
+      console.error('[DOKU Jokul] ❌ Error:', err.response.status, JSON.stringify(e));
+      throw new Error('[DOKU ' + err.response.status + '] ' + (e?.error?.message || e?.message || JSON.stringify(e)));
+    }
+    throw new Error('Gagal terhubung ke DOKU: ' + err.message);
   }
-};
+}
 
-/**
- * Verifikasi notifikasi/callback dari DOKU.
- *
- * DOKU mengirim notification ke webhook URL dengan header signature.
- * Kita perlu memverifikasi signature tersebut.
- *
- * @param {object} notification - Body notifikasi dari DOKU
- * @param {object} headers - HTTP headers dari request notifikasi
- * @returns {{ transaction_status: string, invoice_number: string }}
- */
-const handleNotification = async (notification, headers = {}) => {
-  const { clientId, secretKey } = getDokuConfig();
+// ─── Xendit Invoice ──────────────────────────────────────────────────────────
 
-  // Extract signature from header
-  const incomingSignature = headers['signature'] || headers['Signature'] || '';
+async function createXenditTransaction(order, config) {
+  const { secretKey } = config;
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const amount = Math.round(Number(order.amount));
 
-  // Untuk verifikasi, kita generate ulang signature dari body
-  const requestId = headers['request-id'] || headers['Request-Id'] || '';
-  const requestTimestamp = headers['request-timestamp'] || headers['Request-Timestamp'] || '';
-  // DOKU notification target path
-  const notificationTarget = '/payment/callback';
+  if (isNaN(amount) || amount <= 0)
+    throw new Error('Amount tidak valid: ' + order.amount);
 
-  const bodyString = JSON.stringify(notification);
-
-  const expectedSignature = generateSignature({
-    clientId,
-    requestId,
-    requestTimestamp,
-    requestTarget: notificationTarget,
-    secretKey,
-    body: bodyString,
-  });
-
-  // Untuk sandbox/development, skip signature verification jika tidak ada header
-  if (process.env.NODE_ENV === 'production' && incomingSignature && incomingSignature !== expectedSignature) {
-    throw new Error('Invalid signature — webhook mungkin bukan dari DOKU.');
-  }
-
-  // Map DOKU transaction status
-  const transactionStatus = notification?.transaction?.status || notification?.service?.status || 'UNKNOWN';
-  const invoiceNumber = notification?.order?.invoice_number || notification?.invoice_number || '';
-
-  return {
-    transaction_status: transactionStatus,
-    invoice_number: invoiceNumber,
+  const requestBody = {
+    external_id: order.id,
+    amount,
+    payer_email: order.email || 'customer@example.com',
+    description: order.product_name || 'Trivgoo Booking',
+    currency: 'IDR',
+    invoice_duration: 3600,
+    success_redirect_url: frontendUrl + '/payment/result?status=SUCCESS',
+    failure_redirect_url: frontendUrl + '/payment/result?status=FAILED'
   };
+
+  console.log('[Xendit] Creating invoice:', { external_id: order.id, amount });
+
+  try {
+    const response = await axios.post('https://api.xendit.co/v2/invoices', requestBody, {
+      auth: { username: secretKey, password: '' },
+      headers: { 'Content-Type': 'application/json' }
+    });
+
+    const paymentUrl = response.data?.invoice_url;
+    if (!paymentUrl)
+      throw new Error('Xendit tidak mengembalikan invoice URL: ' + JSON.stringify(response.data));
+
+    console.log('[Xendit] ✅ Invoice created:', order.id);
+    return { payment_url: paymentUrl, invoice_number: order.id };
+
+  } catch (err) {
+    if (err.response) {
+      const e = err.response.data;
+      throw new Error('[Xendit ' + err.response.status + '] ' + (e?.message || JSON.stringify(e)));
+    }
+    throw new Error('Gagal terhubung ke Xendit: ' + err.message);
+  }
+}
+
+// ─── Main createTransaction ───────────────────────────────────────────────────
+
+const createTransaction = async (order) => {
+  const config = await getActiveGatewayConfig();
+  console.log('[Payment] Using gateway:', config.gateway);
+
+  if (config.gateway === 'doku') return createDokuTransaction(order, config);
+  if (config.gateway === 'xendit') return createXenditTransaction(order, config);
+
+  throw new Error('Gateway tidak didukung: ' + config.gateway);
 };
 
-module.exports = { createTransaction, handleNotification, generateSignature, getDokuConfig };
+// ─── Webhook Handler ─────────────────────────────────────────────────────────
+
+const handleNotification = async (notification, headers = {}) => {
+  const config = await getActiveGatewayConfig();
+
+  if (config.gateway === 'doku') {
+    const { clientId, secretKey } = config;
+
+    const incomingSignature = headers['signature'] || headers['Signature'] || '';
+    const requestId = headers['request-id'] || headers['Request-Id'] || '';
+    const timestamp = headers['request-timestamp'] || headers['Request-Timestamp'] || '';
+    const notifPath = '/api/v1/payment/notification';
+
+    const bodyString = JSON.stringify(notification);
+    const digest = generateJokulDigest(bodyString);
+    const expectedSignature = generateJokulSignature(clientId, requestId, timestamp, notifPath, digest, secretKey);
+
+    if (process.env.NODE_ENV === 'production' && incomingSignature !== expectedSignature) {
+      throw new Error('Invalid DOKU webhook signature');
+    }
+
+    const transactionStatus = notification?.transaction?.status ||
+      notification?.service?.status || 'UNKNOWN';
+    const invoiceNumber = notification?.order?.invoice_number ||
+      notification?.invoice_number || '';
+
+    if (!invoiceNumber) throw new Error('invoice_number tidak ditemukan di webhook payload');
+
+    return { transaction_status: transactionStatus, invoice_number: invoiceNumber };
+  }
+
+  if (config.gateway === 'xendit') {
+    const callbackToken = headers['x-callback-token'] || '';
+    const expectedToken = process.env.XENDIT_WEBHOOK_TOKEN ||
+      config.settings?.xendit_webhook_secret || '';
+
+    if (process.env.NODE_ENV === 'production' && callbackToken !== expectedToken) {
+      throw new Error('Invalid Xendit webhook token');
+    }
+
+    const status = notification?.status || 'UNKNOWN';
+    const invoiceNumber = notification?.external_id || '';
+
+    if (!invoiceNumber) throw new Error('external_id tidak ditemukan di webhook payload');
+
+    return { transaction_status: status, invoice_number: invoiceNumber };
+  }
+
+  throw new Error('Gateway tidak didukung untuk webhook: ' + config.gateway);
+};
+
+// ─── Exports ──────────────────────────────────────────────────────────────────
+
+module.exports = {
+  createTransaction,
+  handleNotification,
+  getActiveGatewayConfig,
+  getTimestampUTC,
+  generateJokulSignature,
+  generateJokulDigest
+};
