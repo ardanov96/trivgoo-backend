@@ -70,6 +70,7 @@ const getMyBookings = async (req, res) => {
     b.total_price as totalPrice,
     b.date,
     b.status,
+    b.external_id as externalId,
     b.payment_url as paymentUrl,
     b.payment_status as paymentStatus,
     b.created_at as createdAt,
@@ -130,4 +131,52 @@ const updateBookingStatus = async (req, res) => {
   }
 };
 
-module.exports = { getAllBookings, updateBookingStatus, getMyBookings };
+const cancelMyBooking = async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user?.id;
+ 
+  if (!userId) {
+    return response(res, 401, true, 'Unauthorized', null);
+  }
+ 
+  try {
+    // Cek booking milik user ini
+    const [rows] = await db.query(
+      'SELECT id, status, payment_status FROM bookings WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+ 
+    if (rows.length === 0) {
+      return response(res, 404, true, 'Booking tidak ditemukan', null);
+    }
+ 
+    const booking = rows[0];
+ 
+    // Hanya bisa cancel jika masih PENDING
+    // CONFIRMED sudah diproses agent → tidak bisa cancel sendiri
+    if (booking.status !== 'PENDING') {
+      return response(res, 400, true,
+        booking.status === 'CONFIRMED'
+          ? 'Booking sudah dikonfirmasi. Hubungi agen untuk pembatalan.'
+          : `Booking tidak dapat dibatalkan (status: ${booking.status})`,
+        null
+      );
+    }
+ 
+    // Update status ke CANCELLED
+    await db.query(
+      `UPDATE bookings 
+       SET status = 'CANCELLED', payment_status = 'CANCELLED', updated_at = NOW() 
+       WHERE id = ? AND user_id = ?`,
+      [id, userId]
+    );
+ 
+    return response(res, 200, false, 'Booking berhasil dibatalkan', { id: Number(id), status: 'CANCELLED' });
+ 
+  } catch (error) {
+    console.error('Error cancelling booking:', error);
+    return response(res, 500, true, 'Gagal membatalkan booking', null);
+  }
+};
+
+module.exports = { getAllBookings, updateBookingStatus, getMyBookings, cancelMyBooking };

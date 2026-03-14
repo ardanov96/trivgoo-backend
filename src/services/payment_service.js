@@ -29,6 +29,22 @@ function generateJokulSignature(clientId, requestId, timestamp, requestTarget, d
   return 'HMACSHA256=' + Buffer.from(hmacRaw).toString('base64');
 }
 
+/**
+ * Sanitize string agar hanya mengandung karakter yang diizinkan DOKU:
+ * a-z A-Z 0-9 . - / + , = _ : ' @ %
+ * Karakter lain (termasuk tanda kurung, koma unicode, dll) akan diganti spasi lalu di-trim.
+ */
+function sanitizeDokuString(str, maxLength = 255) {
+  if (!str) return '-';
+  return str
+    .normalize('NFD')                        // decompose unicode (é → e + ´)
+    .replace(/[\u0300-\u036f]/g, '')         // hapus combining marks (aksen)
+    .replace(/[^a-zA-Z0-9.\-\/+,=_:'@% ]/g, ' ') // ganti karakter tidak valid dgn spasi
+    .replace(/\s+/g, ' ')                    // collapse multiple spasi
+    .trim()
+    .substring(0, maxLength);
+}
+
 // ─── DB Config ───────────────────────────────────────────────────────────────
 
 async function getActiveGatewayConfig() {
@@ -77,10 +93,13 @@ async function createDokuTransaction(order, config) {
   if (process.env.DOKU_MOCK === 'true') {
     console.log('[DOKU MOCK] Returning fake payment URL');
     await new Promise(r => setTimeout(r, 300));
+    const paymentDueMock = 1440;
+    const expiredAtMock = new Date(Date.now() + paymentDueMock * 60 * 1000).toISOString();
     return {
       payment_url: (process.env.FRONTEND_URL || 'http://localhost:3000') +
         '/payment/result?invoice=' + order.id + '&status=SUCCESS&mock=true',
-      invoice_number: order.id
+      invoice_number: order.id,
+      expired_at: expiredAtMock,
     };
   }
 
@@ -94,6 +113,14 @@ async function createDokuTransaction(order, config) {
   const frontendBase = process.env.FRONTEND_URL || 'http://localhost:3000';
   const callbackUrl = frontendBase + '/payment/result';
 
+  // ── FIX BUG 1: definisikan expiredAt SEBELUM dipakai ──────────────────────
+  const paymentDueMinutes = 1440; // 24 jam
+  const expiredAt = new Date(Date.now() + paymentDueMinutes * 60 * 1000).toISOString();
+
+  // ── FIX BUG 2: sanitize semua string yang dikirim ke DOKU ─────────────────
+  const safeProductName = sanitizeDokuString(order.product_name || 'Trivgoo Booking');
+  const safeCustomerName = sanitizeDokuString(order.name || 'Customer');
+
   const requestBody = {
     order: {
       amount,
@@ -101,15 +128,15 @@ async function createDokuTransaction(order, config) {
       currency: 'IDR',
       callback_url: callbackUrl,
       line_items: [{
-        name: (order.product_name || 'Trivgoo Booking').substring(0, 255),
+        name: safeProductName,
         price: Math.round(amount / (Number(order.quantity) || 1)),
-        quantity: Number(order.quantity) || 1
+        quantity: Number(order.quantity) || 1,
       }]
     },
-    payment: { payment_due_date: 1440 },
+    payment: { payment_due_date: paymentDueMinutes },
     customer: {
-      name: (order.name || 'Customer').substring(0, 255),
-      email: order.email || 'customer@example.com'
+      name: safeCustomerName,
+      email: order.email || 'customer@example.com',
     }
   };
 
@@ -117,7 +144,13 @@ async function createDokuTransaction(order, config) {
   const digest = generateJokulDigest(bodyString);
   const signature = generateJokulSignature(clientId, requestId, timestamp, requestTarget, digest, secretKey);
 
-  console.log('[DOKU Jokul] Creating checkout:', { invoice_number: order.id, amount, requestId });
+  console.log('[DOKU Jokul] Creating checkout:', {
+    invoice_number: order.id,
+    amount,
+    product_name: safeProductName,
+    customer_name: safeCustomerName,
+    requestId,
+  });
 
   try {
     const response = await axios.post(baseUrl + requestTarget, requestBody, {
@@ -137,11 +170,12 @@ async function createDokuTransaction(order, config) {
     if (!paymentUrl)
       throw new Error('DOKU tidak mengembalikan payment URL: ' + JSON.stringify(response.data));
 
-    console.log('[DOKU Jokul] ✅ Checkout created:', order.id, '->', paymentUrl);
-    return { 
-      payment_url: paymentUrl, 
+    console.log('[DOKU Jokul] ✅ Checkout created:', order.id, '->', paymentUrl, '| expires:', expiredAt);
+
+    return {
+      payment_url: paymentUrl,
       invoice_number: order.id,
-      expired_at: expiredAt
+      expired_at: expiredAt,   // ← FIX: sekarang sudah terdefinisi
     };
 
   } catch (err) {
@@ -170,7 +204,7 @@ async function createXenditTransaction(order, config) {
     payer_email: order.email || 'customer@example.com',
     description: order.product_name || 'Trivgoo Booking',
     currency: 'IDR',
-    invoice_duration: 3600,
+    invoice_duration: 86400, // 24 jam
     success_redirect_url: frontendUrl + '/payment/result?status=SUCCESS',
     failure_redirect_url: frontendUrl + '/payment/result?status=FAILED'
   };
@@ -270,5 +304,5 @@ module.exports = {
   getActiveGatewayConfig,
   getTimestampUTC,
   generateJokulSignature,
-  generateJokulDigest
+  generateJokulDigest,
 };
