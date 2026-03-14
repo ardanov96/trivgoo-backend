@@ -1,4 +1,4 @@
-const Hashids = require('hashids/cjs');
+const Hashids = require('hashids');
 const productModel = require('../models/product');
 
 const SALT = process.env.VITE_HASHIDS_SALT || 'TrivgooSuperSecretSalt2026';
