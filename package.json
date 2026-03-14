@@ -45,6 +45,7 @@
     "express-mysql-session": "^3.0.3",
     "express-session": "^1.18.2",
     "googleapis": "^139.0.0",
+    "hashids": "^2.3.0",
     "helmet": "^7.1.0",
     "https": "^1.0.0",
     "jsonwebtoken": "^9.0.3",
