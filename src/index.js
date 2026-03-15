@@ -14,10 +14,12 @@ const bookings        = require("./routes/booking");
 const promoCampaign   = require("./routes/promo_campaign");
 const loyalty         = require("./routes/loyalty");
 const voucher         = require("./routes/voucher");
+const chat            = require("./routes/chat");
 
 Route.use("/", publicRoutes);
 Route.use("/auth", auth);
 Route.use("/agent", agent);
+Route.use("/chat", chat);
 Route.use("/admin", admin);
 Route.use("/media", media);
 Route.use("/cars", cars);
