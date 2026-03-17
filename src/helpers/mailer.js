@@ -243,4 +243,111 @@ async function send_activation_email(toEmail, recipientName, activationToken, ro
   });
 }
 
-module.exports = { send_reset_password_email, send_activation_email };
+/**
+ * Send payment success email
+ * @param {string} toEmail
+ * @param {string} recipientName
+ * @param {string} invoiceNumber
+ * @param {string} productName
+ * @param {string} amount
+ */
+async function send_payment_success_email(toEmail, recipientName, invoiceNumber, productName, amount) {
+  const BASE_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const myBookingsLink = `${BASE_URL}/my-bookings`;
+  const brandColor = '#E05845';
+
+  const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Payment Successful</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f4f5;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f5;padding:40px 0;">
+    <tr>
+      <td align="center">
+        <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+          
+          <!-- Header -->
+          <tr>
+            <td style="background:#10b981;padding:32px 40px;text-align:center;">
+              <h1 style="margin:0;color:#ffffff;font-size:28px;font-weight:900;letter-spacing:-0.5px;">
+                Payment Successful!
+              </h1>
+              <p style="margin:6px 0 0;color:rgba(255,255,255,0.85);font-size:13px;letter-spacing:2px;text-transform:uppercase;">
+                Booking Confirmed
+              </p>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px 40px 32px;">
+              <p style="margin:0 0 8px;font-size:22px;font-weight:700;color:#111827;">
+                Hi, ${recipientName} 👋
+              </p>
+              <p style="margin:0 0 24px;font-size:15px;color:#6b7280;line-height:1.6;">
+                Great news! We have successfully received your payment. Your booking for <strong>${productName}</strong> is now confirmed.
+              </p>
+
+              <!-- Transaction Summary -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:10px;margin-bottom:24px;">
+                <tr>
+                  <td style="padding:16px 20px;">
+                    <p style="margin:0 0 10px;font-size:13px;color:#6b7280;">Invoice Number</p>
+                    <p style="margin:0 0 16px;font-size:16px;color:#111827;font-weight:700;">${invoiceNumber}</p>
+                    
+                    <p style="margin:0 0 10px;font-size:13px;color:#6b7280;">Amount Paid</p>
+                    <p style="margin:0;font-size:18px;color:#10b981;font-weight:bold;">Rp ${parseInt(amount).toLocaleString('id-ID')}</p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- CTA Button -->
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding:8px 0 32px;">
+                    <a href="${myBookingsLink}"
+                      style="display:inline-block;background:${brandColor};color:#ffffff;text-decoration:none;
+                             font-size:15px;font-weight:700;padding:14px 40px;border-radius:12px;
+                             letter-spacing:0.3px;box-shadow:0 4px 12px rgba(224,88,69,0.35);">
+                      View My Bookings
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#f9fafb;padding:24px 40px;border-top:1px solid #f3f4f6;text-align:center;">
+              <p style="margin:0;font-size:12px;color:#9ca3af;">
+                © ${new Date().getFullYear()} Trivgoo · All rights reserved
+              </p>
+              <p style="margin:6px 0 0;font-size:12px;color:#d1d5db;">
+                Thank you for choosing Trivgoo!
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `;
+
+  await transporter.sendMail({
+    from: `"Trivgoo" <${process.env.SMTP_USER}>`,
+    to: toEmail,
+    subject: '✅ Payment Successful - Trivgoo',
+    html,
+  });
+}
+
+module.exports = { send_reset_password_email, send_activation_email, send_payment_success_email };

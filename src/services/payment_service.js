@@ -175,7 +175,8 @@ async function createDokuTransaction(order, config) {
     return {
       payment_url: paymentUrl,
       invoice_number: order.id,
-      expired_at: expiredAt,   // ← FIX: sekarang sudah terdefinisi
+      expired_at: expiredAt,
+      request_id: requestId,   // ← simpan agar bisa dipakai saat cancel
     };
 
   } catch (err) {
@@ -245,6 +246,66 @@ const createTransaction = async (order) => {
   throw new Error('Gateway tidak didukung: ' + config.gateway);
 };
 
+// ─── Cancel Transaction ───────────────────────────────────────────────────────
+
+const cancelTransaction = async (invoiceNumber, originalRequestId = null) => {
+  try {
+    const config = await getActiveGatewayConfig();
+    console.log('[Payment Cancel] Attempting to cancel invoice:', invoiceNumber, 'on', config.gateway);
+
+    if (config.gateway === 'xendit') {
+      // Xendit mendukung expire/cancel invoice secara langsung
+      await axios.post(`https://api.xendit.co/v2/invoices/${invoiceNumber}/expire!`, {}, {
+        auth: { username: config.secretKey, password: '' }
+      });
+      console.log('[Xendit] ✅ Invoice expired:', invoiceNumber);
+      return true;
+    }
+
+    if (config.gateway === 'doku') {
+      const { clientId, secretKey, baseUrl } = config;
+      const requestTarget = '/checkout/v3/cancellations';
+      const requestId = uuidv4();
+      const timestamp = getTimestampUTC();
+
+      const requestBody = {
+        client: { id: clientId },
+        order: { invoice_number: invoiceNumber },
+        payment: { original_request_id: originalRequestId || invoiceNumber },
+        cancel: { reason: 'RESTOCK' },
+        note: 'Pembatalan pesanan dari Trivgoo'
+      };
+
+      const bodyString = JSON.stringify(requestBody);
+      const digest = generateJokulDigest(bodyString);
+      const signature = generateJokulSignature(clientId, requestId, timestamp, requestTarget, digest, secretKey);
+
+      try {
+        await axios.post(baseUrl + requestTarget, requestBody, {
+          headers: {
+            'Client-Id': clientId,
+            'Request-Id': requestId,
+            'Request-Timestamp': timestamp,
+            'Signature': signature,
+            'Content-Type': 'application/json'
+          }
+        });
+        console.log('[DOKU] ✅ Tagihan berhasil dibatalkan di DOKU:', invoiceNumber);
+      } catch (err) {
+        console.error('[DOKU] ⚠️ Gagal memanggil endpoint cancellations:', err?.response?.data || err?.message);
+        // Tetap true agar pembatalan lokal tidak gagal
+      }
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error('[Payment Cancel] Gagal membatalkan di gateway:', error.message);
+    return false;
+  }
+};
+
+
 // ─── Webhook Handler ─────────────────────────────────────────────────────────
 
 const handleNotification = async (notification, headers = {}) => {
@@ -300,6 +361,7 @@ const handleNotification = async (notification, headers = {}) => {
 
 module.exports = {
   createTransaction,
+  cancelTransaction,
   handleNotification,
   getActiveGatewayConfig,
   getTimestampUTC,

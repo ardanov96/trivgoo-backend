@@ -2,6 +2,7 @@
 const misc = require('../helpers/response');
 const payment_service = require('../services/payment_service');
 const { execute } = require('../configs/db');
+const { send_payment_success_email } = require('../helpers/mailer');
 
 /**
  * POST /api/v1/payment/create-payment
@@ -86,14 +87,15 @@ const createPayment = async (req, res) => {
     // Buat transaksi ke payment gateway
     const transaction = await payment_service.createTransaction(order);
 
-    // Upsert bookings
+    // Upsert bookings — simpan juga payment_request_id agar bisa dipakai untuk cancel
     await execute(
       `INSERT INTO bookings 
-        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, status, payment_url, payment_gateway, payment_status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), 'PENDING', ?, 'doku', 'PENDING')
+        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, status, payment_url, payment_gateway, payment_status, payment_request_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURDATE(), 'PENDING', ?, 'doku', 'PENDING', ?)
        ON DUPLICATE KEY UPDATE
-        payment_url = VALUES(payment_url),
-        updated_at  = NOW()`,
+        payment_url        = VALUES(payment_url),
+        payment_request_id = VALUES(payment_request_id),
+        updated_at         = NOW()`,
       [
         order.id,
         user_id || null,
@@ -103,6 +105,7 @@ const createPayment = async (req, res) => {
         order.quantity || 1,
         order.amount,
         transaction.payment_url || null,
+        transaction.request_id  || null,   // ← FIX: simpan UUID transaksi DOKU
       ]
     );
 
@@ -167,6 +170,54 @@ const handleNotification = async (req, res) => {
     const rawStatus = (result.transaction_status || '').toUpperCase();
     const newStatus = statusMap[rawStatus] || 'PENDING';
 
+    // ── PENGAMAN: Cek apakah booking sudah CANCELLED ──────────────────────
+    const existingBooking = await execute(
+      `SELECT id, status, payment_status, user_name, total_price, external_id 
+       FROM bookings WHERE external_id = ? LIMIT 1`,
+      [result.invoice_number]
+    );
+    const existingRows = Array.isArray(existingBooking[0]) ? existingBooking[0] : existingBooking;
+    const currentBooking = existingRows?.[0];
+
+    if (currentBooking && currentBooking.status === 'CANCELLED' && newStatus === 'PAID') {
+      // ⚠️ User sudah cancel tapi tetap bayar → JANGAN ubah status, tandai perlu REFUND
+      console.warn(
+        `[PAYMENT] ⚠️ REFUND DIPERLUKAN! Booking ${result.invoice_number} sudah CANCELLED ` +
+        `tapi user tetap membayar. Amount: ${currentBooking.total_price}. ` +
+        `User: ${currentBooking.user_name}. Silakan proses refund manual via dashboard DOKU.`
+      );
+
+      // Log ke webhook_logs dengan status khusus 'needs_refund'
+      await execute(
+        `UPDATE webhook_logs 
+         SET status = 'needs_refund', signature_verified = true, processed_at = NOW(),
+             error_message = 'Booking sudah CANCELLED tapi user tetap membayar. Perlu refund manual.'
+         WHERE external_id = ? AND gateway = 'doku' ORDER BY id DESC LIMIT 1`,
+        [result.invoice_number]
+      );
+
+      // Update payment_transactions agar tercatat pembayaran masuk
+      await execute(
+        `UPDATE payment_transactions
+         SET status = 'NEEDS_REFUND', gateway_transaction_id = ?, payment_method = ?,
+             paid_at = NOW(), gateway_response = ?, updated_at = NOW()
+         WHERE external_id = ? AND gateway = 'doku'`,
+        [
+          notification?.transaction?.id || null,
+          notification?.channel?.id || notification?.payment_method || null,
+          JSON.stringify(notification),
+          result.invoice_number,
+        ]
+      );
+
+      // TIDAK mengubah status booking — tetap CANCELLED
+      return res.json({ 
+        success: true, 
+        message: 'Payment received but booking was cancelled. Refund needed.' 
+      });
+    }
+    // ── END PENGAMAN ──────────────────────────────────────────────────────
+
     await execute(
       `UPDATE bookings SET status = ?, payment_status = ?, updated_at = NOW() WHERE external_id = ?`,
       [newStatus === 'PAID' ? 'CONFIRMED' : newStatus, newStatus, result.invoice_number]
@@ -194,6 +245,40 @@ const handleNotification = async (req, res) => {
        WHERE external_id = ? AND gateway = 'doku' ORDER BY id DESC LIMIT 1`,
       [result.invoice_number]
     );
+
+    // Kirim Notifikasi Email Jika Pembayaran Berhasil
+    if (newStatus === 'PAID') {
+      try {
+        const bookingData = await execute(
+          `SELECT b.external_id, b.product_name, b.total_price, b.user_name, u.email as user_email, b.date
+           FROM bookings b
+           LEFT JOIN users u ON b.user_id = u.id
+           WHERE b.external_id = ? LIMIT 1`,
+          [result.invoice_number]
+        );
+        const bRows = Array.isArray(bookingData[0]) ? bookingData[0] : bookingData;
+        
+        if (bRows && bRows.length > 0) {
+          const booking = bRows[0];
+          const toEmail = booking.user_email || notification?.customer?.email || notification?.payer_email;
+          const recipientName = booking.user_name || notification?.customer?.name || 'Customer';
+          
+          if (toEmail) {
+            await send_payment_success_email(
+              toEmail,
+              recipientName,
+              booking.external_id,
+              booking.product_name || 'Trivgoo Booking',
+              booking.total_price
+            );
+            console.log(`[PAYMENT] Success notification email sent to ${toEmail}`);
+          }
+        }
+      } catch (emailErr) {
+        console.error('[EMAIL NOTIF] Failed to send payment success email:', emailErr.message);
+        // Error email tidak boleh menggagalkan proses webhook
+      }
+    }
 
     return res.json({ success: true, message: 'Notification processed' });
 
