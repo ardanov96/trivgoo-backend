@@ -224,6 +224,62 @@ async function toggle(req, res) {
   }
 }
 
+
+/**
+ * POST /api/v1/promo-campaigns/:id/join
+ * Agent mendaftarkan produknya ke campaign tertentu.
+ * Body: { product_id, discount_pct, sale_price }
+ */
+async function join_campaign(req, res) {
+  try {
+    const user = get_session_user(req);
+    if (!user) return misc.response(res, 401, true, 'Unauthorized');
+ 
+    const campaign_id = Number.parseInt(req.params.id, 10);
+    if (!campaign_id) return misc.response(res, 400, true, 'campaign_id tidak valid');
+ 
+    const { product_id, discount_pct, sale_price } = req.body;
+ 
+    if (!product_id || !discount_pct) {
+      return misc.response(res, 400, true, 'product_id dan discount_pct wajib diisi');
+    }
+ 
+    // Cek campaign masih aktif
+    const campaign = await get_campaign_by_id(campaign_id);
+    if (!campaign) return misc.response(res, 404, true, 'Campaign tidak ditemukan');
+ 
+    const now = new Date();
+    if (!campaign.is_active || new Date(campaign.ends_at) < now) {
+      return misc.response(res, 400, true, 'Campaign sudah tidak aktif');
+    }
+ 
+    // Validasi min diskon (jika campaign tipe percent)
+    if (campaign.discount_type === 'percent' && Number(discount_pct) < Number(campaign.discount_value)) {
+      return misc.response(res, 400, true, `Diskon minimal ${campaign.discount_value}% untuk campaign ini`);
+    }
+ 
+    // Simpan ke tabel promo_campaign_products (scope = product)
+    const { pool: db } = require('../configs/db');
+    await db.execute(
+      `INSERT IGNORE INTO promo_campaign_products (campaign_id, scope_type, scope_id)
+       VALUES (?, 'product', ?)`,
+      [campaign_id, Number(product_id)]
+    );
+ 
+    // Opsional: simpan juga discount override ke tabel khusus jika ada
+    // Untuk sementara cukup insert ke pivot table
+    return misc.response(res, 200, false, 'Produk berhasil didaftarkan ke campaign', {
+      campaign_id,
+      product_id: Number(product_id),
+      discount_pct: Number(discount_pct),
+      sale_price: sale_price ? Number(sale_price) : null,
+    });
+  } catch (e) {
+    console.error('[promo_campaign.join_campaign]', e);
+    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
+  }
+}
+
 // ─── Analytics controllers ────────────────────────────────────────────────────
 
 /** GET /api/v1/promo-campaigns/analytics/summary */
@@ -263,6 +319,7 @@ module.exports = {
   update,
   remove,
   toggle,
+  join_campaign,
   analytics_summary,
   analytics_daily,
 };

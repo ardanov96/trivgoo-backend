@@ -1,5 +1,6 @@
 const db = require('../configs/db');
 const { response } = require('../helpers/response');
+const payment_service = require('../services/payment_service');
 
 const getAllBookings = async (req, res) => {
   try {
@@ -60,30 +61,38 @@ const getMyBookings = async (req, res) => {
     }
 
     const [rows] = await db.query(
-      `SELECT 
-        b.id, 
-        b.user_id as userId, 
-        b.product_id as productId, 
-        b.product_name as productName, 
-        b.user_name as userName, 
-        b.quantity, 
-        b.total_price as totalPrice, 
-        b.date, 
-        b.status,
-        p.image_url as productImage
-      FROM bookings b
-      LEFT JOIN products p ON b.product_id = p.id
-      WHERE b.user_id = ?
-      ORDER BY b.created_at DESC`,
-      [userId]
-    );
+  `SELECT
+    b.id,
+    b.user_id as userId,
+    b.product_id as productId,
+    b.product_name as productName,
+    b.user_name as userName,
+    b.quantity,
+    b.total_price as totalPrice,
+    b.date,
+    b.status,
+    b.external_id as externalId,
+    b.payment_url as paymentUrl,
+    b.payment_status as paymentStatus,
+    b.created_at as createdAt,
+    p.image_url as productImage
+  FROM bookings b
+  LEFT JOIN products p ON b.product_id = p.id
+  WHERE b.user_id = ?
+  ORDER BY b.created_at DESC`,
+  [userId]
+);
 
-    const formattedRows = rows.map(row => ({
-      ...row,
-      date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
-      totalPrice: parseFloat(row.totalPrice),
-      productImage: row.productImage || null,
-    }));
+const formattedRows = rows.map(row => ({
+  ...row,
+  date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
+  totalPrice: parseFloat(row.totalPrice),
+  productImage: row.productImage || null,
+  // DOKU expired 24 jam dari created_at
+  paymentExpiredAt: row.createdAt
+    ? new Date(new Date(row.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString()
+    : null,
+}));
 
     return response(res, 200, false, 'My bookings fetched successfully', formattedRows);
   } catch (error) {
@@ -123,4 +132,58 @@ const updateBookingStatus = async (req, res) => {
   }
 };
 
-module.exports = { getAllBookings, updateBookingStatus, getMyBookings };
+const cancelMyBooking = async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user?.id;
+ 
+  if (!userId) {
+    return response(res, 401, true, 'Unauthorized', null);
+  }
+ 
+  try {
+    // Cek booking milik user ini
+    const [rows] = await db.query(
+      'SELECT id, status, payment_status, external_id, payment_request_id FROM bookings WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+ 
+    if (rows.length === 0) {
+      return response(res, 404, true, 'Booking tidak ditemukan', null);
+    }
+ 
+    const booking = rows[0];
+ 
+    // Hanya bisa cancel jika masih PENDING
+    // CONFIRMED sudah diproses agent → tidak bisa cancel sendiri
+    if (booking.status !== 'PENDING') {
+      return response(res, 400, true,
+        booking.status === 'CONFIRMED'
+          ? 'Booking sudah dikonfirmasi. Hubungi agen untuk pembatalan.'
+          : `Booking tidak dapat dibatalkan (status: ${booking.status})`,
+        null
+      );
+    }
+ 
+    // Update status ke CANCELLED
+    await db.query(
+      `UPDATE bookings 
+       SET status = 'CANCELLED', payment_status = 'CANCELLED', updated_at = NOW() 
+       WHERE id = ? AND user_id = ?`,
+      [id, userId]
+    );
+ 
+    // Batalkan juga tagihan di Payment Gateway
+    if (booking.external_id) {
+      // Kirim payment_request_id (UUID transaksi asli) agar DOKU dapat memverifikasi pembatalan
+      await payment_service.cancelTransaction(booking.external_id, booking.payment_request_id || null);
+    }
+
+    return response(res, 200, false, 'Booking berhasil dibatalkan', { id: Number(id), status: 'CANCELLED' });
+ 
+  } catch (error) {
+    console.error('Error cancelling booking:', error);
+    return response(res, 500, true, 'Gagal membatalkan booking', null);
+  }
+};
+
+module.exports = { getAllBookings, updateBookingStatus, getMyBookings, cancelMyBooking };

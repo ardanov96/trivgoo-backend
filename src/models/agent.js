@@ -293,10 +293,43 @@ async function list_agent_users_with_verification() {
   }));
 }
 
+async function get_agent_dashboard_stats(user_id) {
+  const sql = `
+    SELECT
+      COUNT(DISTINCT b.id)                                      AS total_bookings,
+      COALESCE(SUM(b.total_price), 0)                          AS total_revenue,
+      COUNT(DISTINCT CASE WHEN b.status = 'PENDING' THEN b.id END)   AS pending_bookings,
+      COUNT(DISTINCT CASE WHEN b.status = 'CONFIRMED' THEN b.id END) AS confirmed_bookings,
+      COUNT(DISTINCT CASE WHEN b.status = 'CANCELLED' THEN b.id END) AS cancelled_bookings
+    FROM bookings b
+    WHERE b.agent_id = ?
+  `;
+  const [rows] = await db.query(sql, [user_id]);
+  return rows[0] || {};
+}
+
+async function get_agent_weekly_sales(user_id) {
+  const sql = `
+    SELECT
+      DAYNAME(b.created_at)             AS day,
+      COALESCE(SUM(b.total_price), 0)  AS total_sales,
+      COUNT(b.id)                       AS total_orders
+    FROM bookings b
+    WHERE b.agent_id = ?
+      AND b.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+    GROUP BY DAYOFWEEK(b.created_at), DAYNAME(b.created_at)
+    ORDER BY DAYOFWEEK(b.created_at)
+  `;
+  const [rows] = await db.query(sql, [user_id]);
+  return rows;
+}
+
 module.exports = {
   upsert_agent_verification,
   find_verification_by_user_id,
   update_agent_verification_status,
   set_agent_verification_decision,
   list_agent_users_with_verification,
+  get_agent_dashboard_stats, 
+  get_agent_weekly_sales, 
 };

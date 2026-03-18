@@ -6,7 +6,7 @@ exports.up = function(knex) {
   return knex.schema.createTable('settings', (table) => {
     table.increments('id').primary(); 
     table.string('site_name').defaultTo('Trivgoo Travel');
-    table.string('support_email').defaultTo('support@trivgoo.com');
+    table.string('support_email').defaultTo('cs@trivgoo.com');
     table.boolean('maintenance_mode').defaultTo(false);
     table.integer('commission_rate').defaultTo(11);
     table.string('currency', 10).defaultTo('USD');
