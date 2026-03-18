@@ -45,6 +45,24 @@ function sanitizeDokuString(str, maxLength = 255) {
     .substring(0, maxLength);
 }
 
+/**
+ * Buat transaksi DOKU Checkout.
+ * Return payment_url agar frontend bisa redirect customer.
+ *
+ * @param {object} order
+ * @param {string} order.id - Invoice/external ID
+ * @param {number} order.amount - Total amount
+ * @param {string} order.name - Customer name
+ * @param {string} order.email - Customer email
+ * @returns {Promise<{payment_url: string, invoice_number: string}>}
+ */
+const createTransaction = async (order) => {
+  const { clientId, secretKey, baseUrl } = getDokuConfig();
+  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+  // Arahkan user kembali ke halaman 'My Bookings' setelah checkout
+  const callbackUrl = process.env.DOKU_CALLBACK_URL || `${frontendUrl}/my-bookings`;
+  
 // ─── DB Config ───────────────────────────────────────────────────────────────
 
 async function getActiveGatewayConfig() {
