@@ -99,6 +99,25 @@ async function find_product_vouchers(product_id) {
   return rows;
 }
 
+async function find_vouchers_for_products(product_ids) {
+  if (!product_ids || product_ids.length === 0) return {};
+  const placeholders = product_ids.map(() => "?").join(",");
+  const rows = await query(
+    `SELECT pv.product_id, v.*
+     FROM product_vouchers pv
+     JOIN vouchers v ON v.id = pv.voucher_id
+     WHERE pv.product_id IN (${placeholders})
+     ORDER BY v.created_at DESC`,
+    product_ids
+  );
+  return rows.reduce((acc, row) => {
+    const pid = row.product_id;
+    if (!acc[pid]) acc[pid] = [];
+    acc[pid].push(row);
+    return acc;
+  }, {});
+}
+
 // ── Response builder ──────────────────────────────────────────────────────────
 
 async function build_product_response(row) {
@@ -148,7 +167,12 @@ async function list_all_products() {
      WHERE p.is_active = 1
      ORDER BY p.created_at DESC`
   );
-  return Promise.all(rows.map(async (row) => ({
+
+  // 1 query untuk semua voucher, bukan N query
+  const product_ids = rows.map((r) => r.id);
+  const vouchersMap = await find_vouchers_for_products(product_ids);
+
+  return rows.map((row) => ({
     ...row,
     price:     Number(row.price),
     rating:    row.rating ? Number(row.rating) : 0,
@@ -156,8 +180,8 @@ async function list_all_products() {
     image_url: resolve_image_url(row.image_url, row.owner_specialization),
     features:  safeJsonParse(row.features, []),
     details:   safeJsonParse(row.details, {}),
-    vouchers:  await find_product_vouchers(row.id),   // ← NEW
-  })));
+    vouchers:  vouchersMap[row.id] ?? [],  // ambil dari map, no extra query
+  }));
 }
 
 async function get_product_by_id(product_id) {

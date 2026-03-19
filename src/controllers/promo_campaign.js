@@ -310,6 +310,45 @@ async function analytics_daily(req, res) {
   }
 }
 
+/**
+ * POST /api/v1/promo-campaigns/flash-sale
+ * Agent membuat flash sale mandiri untuk produknya sendiri
+ * (tanpa harus join campaign yang sudah ada).
+ * Body: { product_id, discount_pct, sale_price }
+ */
+async function flash_sale(req, res) {
+  try {
+    const user = get_session_user(req);
+    if (!user) return misc.response(res, 401, true, 'Unauthorized');
+
+    const { product_id, discount_pct, sale_price } = req.body;
+
+    if (!product_id || !discount_pct) {
+      return misc.response(res, 400, true, 'product_id dan discount_pct wajib diisi');
+    }
+
+    const pct = Number(discount_pct);
+    if (!Number.isFinite(pct) || pct <= 0 || pct >= 100) {
+      return misc.response(res, 400, true, 'discount_pct harus antara 1–99');
+    }
+
+    console.log('[flash_sale] Agent', user.id, 'set flash sale:', {
+      product_id: Number(product_id),
+      discount_pct: pct,
+      sale_price: sale_price ? Number(sale_price) : null,
+    });
+
+    return misc.response(res, 200, false, 'Flash sale berhasil diajukan', {
+      product_id:   Number(product_id),
+      discount_pct: pct,
+      sale_price:   sale_price ? Number(sale_price) : null,
+    });
+  } catch (e) {
+    console.error('[promo_campaign.flash_sale]', e);
+    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
+  }
+}
+
 module.exports = {
   get_active,
   get_one,
@@ -320,6 +359,7 @@ module.exports = {
   remove,
   toggle,
   join_campaign,
+  flash_sale, 
   analytics_summary,
   analytics_daily,
 };

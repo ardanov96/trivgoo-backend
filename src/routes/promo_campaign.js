@@ -22,6 +22,8 @@ router.get('/:id/products',        ctrl.get_campaign_products);
 // POST /api/v1/promo-campaigns/:id/join
 router.post('/:id/join',           ctrl.join_campaign);
 
+router.post('/flash-sale', ctrl.flash_sale);
+
 // ─── Generic /:id ─────────────────────────────────────────────────────────────
 router.get('/:id',                 ctrl.get_one);
 
@@ -31,5 +33,7 @@ router.post('/',                   ctrl.create);
 router.put('/:id',                 ctrl.update);
 router.patch('/:id/toggle',        ctrl.toggle);
 router.delete('/:id',              ctrl.remove);
+
+
 
 module.exports = router;
