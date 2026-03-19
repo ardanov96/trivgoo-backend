@@ -39,6 +39,7 @@ function set_session_user(req, user) {
   req.session.user = {
     id: user.id,
     email: user.email,
+    pending_email: user.pending_email ?? null,
     role: user.role,
     specialization: user.specialization ?? null,
     name: user.name ?? null,
@@ -221,11 +222,29 @@ module.exports = {
       const user_id = req.session?.user?.id || req.user?.id;
       if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
 
-      const { name, email } = req.body;
+      const currentUser = await find_user_by_id(user_id);
+      if (!currentUser) return misc.response(res, 404, true, 'User not found');
+
+      const { name, email, tanggal_lahir, jenis_kelamin, tempat_tinggal, phone_number } = req.body;
       const updateData = {};
 
-      if (name) updateData.name = name;
-      if (email) updateData.email = email;
+      if (name && name !== currentUser.name) updateData.name = name;
+      if (email && email !== currentUser.email) {
+        const existing = await find_user_by_email(email);
+        if (existing) {
+          return misc.response(res, 409, true, 'Email sudah terdaftar pada akun lain');
+        }
+        updateData.pending_email = email;
+        
+        // Generate and send token for pending email
+        const activationToken = crypto.randomBytes(32).toString('hex');
+        await save_activation_token(email, activationToken);
+        await send_activation_email(email, currentUser.name || name, activationToken, currentUser.role.toLowerCase());
+      }
+      if (tanggal_lahir !== undefined && tanggal_lahir !== currentUser.tanggal_lahir) updateData.tanggal_lahir = tanggal_lahir || null;
+      if (jenis_kelamin !== undefined && jenis_kelamin !== currentUser.jenis_kelamin) updateData.jenis_kelamin = jenis_kelamin || null;
+      if (tempat_tinggal !== undefined && tempat_tinggal !== currentUser.tempat_tinggal) updateData.tempat_tinggal = tempat_tinggal || null;
+      if (phone_number !== undefined && phone_number !== currentUser.phone_number) updateData.phone_number = phone_number || null;
 
       // req.file berasal dari middleware upload.single()
       if (req.file) {
@@ -233,14 +252,18 @@ module.exports = {
         updateData.profile_photo = req.file.filename;
       }
 
-      // Jalankan update di DB
-      const updatedUser = await update_user(user_id, updateData);
+      // Jalankan update di DB jika ada data yang berubah
+      let updatedUser = currentUser;
+      if (Object.keys(updateData).length > 0) {
+        updatedUser = await update_user(user_id, updateData) || currentUser;
+      }
 
       // PENTING: Update data di session agar saat reload/refresh data tetap terbaru
       req.session.user = {
         ...req.session.user,
         name: updatedUser.name,
         email: updatedUser.email,
+        pending_email: updatedUser.pending_email,
         // Optional: Jika ingin session menyimpan info foto
         profile_photo: updatedUser.profile_photo
       };
@@ -358,6 +381,32 @@ module.exports = {
       return misc.response(res, 200, false, 'Email berhasil diverifikasi! Silakan login.');
     } catch (e) {
       return misc.response(res, 500, true, e.message);
+    }
+  },
+
+  resend_verification: async (req, res) => {
+    try {
+      const user_id = req.session?.user?.id || req.user?.id;
+      if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
+
+      const user = await find_user_by_id(user_id);
+      if (!user) return misc.response(res, 404, true, 'User not found');
+
+      const targetEmail = user.pending_email || user.email;
+      if (user.verification_status === 'VERIFIED' && !user.pending_email) {
+        return misc.response(res, 400, true, 'Email sudah terverifikasi');
+      }
+
+      await db.execute('DELETE FROM email_verifications WHERE email = ?', [targetEmail]);
+
+      const activationToken = crypto.randomBytes(32).toString('hex');
+      await save_activation_token(targetEmail, activationToken);
+      await send_activation_email(targetEmail, user.name, activationToken, user.role.toLowerCase());
+
+      return misc.response(res, 200, false, 'Email verifikasi telah dikirim ulang');
+    } catch (e) {
+      console.error(e);
+      return misc.response(res, 500, true, e.message || 'Internal server error');
     }
   }
 };

@@ -1,5 +1,4 @@
 const db = require("../configs/db");
-const knex = require('../configs/db');
 const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 
@@ -217,7 +216,15 @@ async function verify_email_token(token) {
 }
 
 async function mark_email_verified(email) {
-  await db.query(`UPDATE users SET verification_status = 'VERIFIED', updated_at = NOW() WHERE email = ?`, [email]);
+  await db.query(`
+    UPDATE users 
+    SET 
+      email = IF(pending_email = ?, pending_email, email),
+      pending_email = NULL,
+      verification_status = 'VERIFIED', 
+      updated_at = CURRENT_TIMESTAMP 
+    WHERE email = ? OR pending_email = ?
+  `, [email, email, email]);
   await db.query(`DELETE FROM email_verifications WHERE email = ?`, [email]);
 }
 
@@ -237,7 +244,18 @@ module.exports = {
   mark_email_verified,
 
   update_user: async (id, data) => {
-    await knex('users').where({ id }).update(data);
-    return knex('users').where({ id }).first();
+    if (!id || Object.keys(data).length === 0) return null;
+
+    const keys = Object.keys(data);
+    const setClause = keys.map(k => `${k} = ?`).join(', ');
+    const values = [...Object.values(data), id];
+
+    await db.query(
+      `UPDATE users SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      values
+    );
+
+    const [rows] = await db.query('SELECT * FROM users WHERE id = ? LIMIT 1', [id]);
+    return rows[0] || null;
   },
 };

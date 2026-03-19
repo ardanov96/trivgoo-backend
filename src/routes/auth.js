@@ -12,6 +12,7 @@ Route.get("/me", requireAuth, auth.me);
 Route.post("/logout", requireAuth, auth.logout);
 
 Route.patch("/update-profile", requireAuth, upload.single("profile_photo"), auth.update_profile);
+Route.post("/resend-verification", requireAuth, auth.resend_verification);
 
 Route.post("/forgot-password", auth.forgot_password);
 Route.get("/reset-password", auth.validate_reset_token);

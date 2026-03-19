@@ -302,7 +302,8 @@ async function get_agent_dashboard_stats(user_id) {
       COUNT(DISTINCT CASE WHEN b.status = 'CONFIRMED' THEN b.id END) AS confirmed_bookings,
       COUNT(DISTINCT CASE WHEN b.status = 'CANCELLED' THEN b.id END) AS cancelled_bookings
     FROM bookings b
-    WHERE b.agent_id = ?
+    JOIN products p ON b.product_id = p.id
+    WHERE p.owner_id = ?
   `;
   const [rows] = await db.query(sql, [user_id]);
   return rows[0] || {};
@@ -315,7 +316,8 @@ async function get_agent_weekly_sales(user_id) {
       COALESCE(SUM(b.total_price), 0)  AS total_sales,
       COUNT(b.id)                       AS total_orders
     FROM bookings b
-    WHERE b.agent_id = ?
+    JOIN products p ON b.product_id = p.id
+    WHERE p.owner_id = ?
       AND b.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
     GROUP BY DAYOFWEEK(b.created_at), DAYNAME(b.created_at)
     ORDER BY DAYOFWEEK(b.created_at)
