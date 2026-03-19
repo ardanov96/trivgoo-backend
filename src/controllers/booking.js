@@ -14,7 +14,14 @@ const getAllBookings = async (req, res) => {
                 quantity, 
                 total_price as totalPrice, 
                 date, 
-                status  
+                status,
+                external_id as externalId,
+                payment_url as paymentUrl,
+                payment_status as paymentStatus,
+                payment_gateway as paymentGateway,
+                payment_method as paymentMethod,
+                paid_at as paidAt,
+                created_at as createdAt
                FROM bookings WHERE 1=1`;
     const params = [];
 
