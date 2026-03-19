@@ -15,6 +15,11 @@ Route.get('/verification', requireAuth, agent.get_my_verification);
 Route.get('/dashboard/stats', requireAuth, agent.get_dashboard_stats);
 Route.get('/dashboard/weekly-sales', requireAuth, agent.get_weekly_sales);
 
+// BOOKING MANAGEMENT ROUTES
+Route.get('/bookings', requireAuth, agent.get_my_bookings);
+Route.get('/bookings/:id', requireAuth, agent.get_my_booking_detail);
+Route.patch('/bookings/:id/status', requireAuth, agent.update_my_booking_status);
+
 // PRODUCT ROUTES
 Route.get('/products', requireAuth, agentProduct.list_my_products);
 Route.post('/products', requireAuth, agentProduct.create_my_product);

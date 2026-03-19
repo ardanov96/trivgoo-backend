@@ -7,6 +7,9 @@ const {
   find_verification_by_user_id,
   get_agent_dashboard_stats,
   get_agent_weekly_sales,
+  get_agent_bookings,
+  get_agent_booking_detail,
+  update_agent_booking_status,
 } = require('../models/agent');
 
 const { update_verification_status } = require('../models/user');
@@ -147,6 +150,84 @@ module.exports = {
     } catch (e) {
       console.error(e);
       return misc.response(res, 500, true, e.message || 'Internal server error');
+    }
+  },
+
+  /**
+   * GET /api/v1/agent/bookings
+   * List all bookings for the agent's products
+   */
+  get_my_bookings: async (req, res) => {
+    try {
+      const user_id = req.session?.user?.id;
+      if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
+
+      const user_role = req.session?.user?.role;
+      if (user_role !== 'AGENT') {
+        return misc.response(res, 403, true, 'Forbidden: Only agents can access this endpoint');
+      }
+
+      const { status, payment_status, search, page, limit } = req.query;
+      const result = await get_agent_bookings(user_id, { status, payment_status, search, page, limit });
+
+      return misc.response(res, 200, false, 'Agent bookings fetched', result);
+    } catch (e) {
+      console.error('[Agent Bookings]', e);
+      return misc.response(res, 500, true, e.message || 'Internal server error');
+    }
+  },
+
+  /**
+   * GET /api/v1/agent/bookings/:id
+   * Get single booking detail for agent
+   */
+  get_my_booking_detail: async (req, res) => {
+    try {
+      const user_id = req.session?.user?.id;
+      if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
+
+      const user_role = req.session?.user?.role;
+      if (user_role !== 'AGENT') {
+        return misc.response(res, 403, true, 'Forbidden: Only agents can access this endpoint');
+      }
+
+      const { id } = req.params;
+      const detail = await get_agent_booking_detail(id, user_id);
+
+      if (!detail) {
+        return misc.response(res, 404, true, 'Booking not found');
+      }
+
+      return misc.response(res, 200, false, 'Booking detail fetched', detail);
+    } catch (e) {
+      console.error('[Agent Booking Detail]', e);
+      return misc.response(res, 500, true, e.message || 'Internal server error');
+    }
+  },
+
+  /**
+   * PATCH /api/v1/agent/bookings/:id/status
+   * Update booking status (CONFIRMED, COMPLETED, CANCELLED)
+   */
+  update_my_booking_status: async (req, res) => {
+    try {
+      const user_id = req.session?.user?.id;
+      if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
+
+      const user_role = req.session?.user?.role;
+      if (user_role !== 'AGENT') {
+        return misc.response(res, 403, true, 'Forbidden: Only agents can access this endpoint');
+      }
+
+      const { id } = req.params;
+      const { status } = req.body;
+
+      const result = await update_agent_booking_status(id, user_id, status);
+      return misc.response(res, 200, false, `Booking #${id} status updated to ${result.status}`, result);
+    } catch (e) {
+      console.error('[Agent Booking Update]', e);
+      const code = e.message?.includes('not found') ? 404 : 400;
+      return misc.response(res, code, true, e.message || 'Failed to update booking status');
     }
   },
 };

@@ -326,12 +326,219 @@ async function get_agent_weekly_sales(user_id) {
   return rows;
 }
 
+// ── Agent Booking Management ──────────────────────────────────────────────────
+
+async function get_agent_bookings(owner_id, { status, payment_status, search, page = 1, limit = 20 } = {}) {
+  const oid = Number(owner_id);
+  if (!Number.isFinite(oid) || oid <= 0) return { data: [], meta: { page: 1, limit: 20, total: 0, total_pages: 0 } };
+
+  let where = 'WHERE p.owner_id = ?';
+  const params = [oid];
+
+  if (status && status !== 'all') {
+    where += ' AND b.status = ?';
+    params.push(status.toUpperCase());
+  }
+
+  if (payment_status && payment_status !== 'all') {
+    where += ' AND b.payment_status = ?';
+    params.push(payment_status.toUpperCase());
+  }
+
+  if (search && search.trim()) {
+    where += ' AND (b.user_name LIKE ? OR b.product_name LIKE ? OR b.external_id LIKE ? OR CAST(b.id AS CHAR) LIKE ?)';
+    const s = `%${search.trim()}%`;
+    params.push(s, s, s, s);
+  }
+
+  // Count total
+  const [countRows] = await db.query(
+    `SELECT COUNT(DISTINCT b.id) AS total FROM bookings b JOIN products p ON b.product_id = p.id ${where}`,
+    params
+  );
+  const total = countRows[0]?.total || 0;
+
+  // Pagination
+  const pg = Math.max(1, Number(page));
+  const lim = Math.min(100, Math.max(1, Number(limit)));
+  const offset = (pg - 1) * lim;
+  const total_pages = Math.ceil(total / lim);
+
+  // Fetch data
+  const [rows] = await db.query(
+    `SELECT
+      b.id,
+      b.user_id,
+      b.product_id,
+      b.product_name,
+      b.user_name,
+      b.quantity,
+      b.total_price,
+      b.date,
+      b.status,
+      b.external_id,
+      b.payment_url,
+      b.payment_status,
+      b.payment_gateway,
+      b.payment_method,
+      b.paid_at,
+      b.created_at,
+      b.updated_at,
+      b.payment_expires_at,
+      p.image_url AS product_image,
+      u.email AS customer_email,
+      up.phone AS customer_phone
+    FROM bookings b
+    JOIN products p ON b.product_id = p.id
+    LEFT JOIN users u ON b.user_id = u.id
+    LEFT JOIN user_profiles up ON up.user_id = b.user_id
+    ${where}
+    ORDER BY b.created_at DESC
+    LIMIT ? OFFSET ?`,
+    [...params, lim, offset]
+  );
+
+  const data = rows.map(r => ({
+    id: r.id,
+    userId: r.user_id,
+    productId: r.product_id,
+    productName: r.product_name,
+    userName: r.user_name,
+    quantity: r.quantity,
+    totalPrice: parseFloat(r.total_price),
+    date: r.date ? new Date(r.date).toISOString().split('T')[0] : null,
+    status: r.status,
+    externalId: r.external_id,
+    paymentUrl: r.payment_url,
+    paymentStatus: r.payment_status,
+    paymentGateway: r.payment_gateway,
+    paymentMethod: r.payment_method,
+    paidAt: r.paid_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    productImage: r.product_image || null,
+    customerEmail: r.customer_email || null,
+    customerPhone: r.customer_phone || null,
+    paymentExpiredAt: r.payment_expires_at || null,
+  }));
+
+  return { data, meta: { page: pg, limit: lim, total, total_pages } };
+}
+
+async function get_agent_booking_detail(booking_id, owner_id) {
+  const bid = Number(booking_id);
+  const oid = Number(owner_id);
+  if (!Number.isFinite(bid) || bid <= 0) return null;
+  if (!Number.isFinite(oid) || oid <= 0) return null;
+
+  const [rows] = await db.query(
+    `SELECT
+      b.*,
+      p.image_url AS product_image,
+      p.name AS p_name,
+      p.location AS product_location,
+      u.email AS customer_email,
+      u.name AS customer_name_from_users,
+      up.phone AS customer_phone,
+      up.address_line AS customer_address,
+      pt.status AS pt_status,
+      pt.payment_method AS pt_payment_method,
+      pt.payment_channel AS pt_payment_channel,
+      pt.paid_at AS pt_paid_at,
+      pt.gateway_transaction_id AS pt_gateway_txn_id
+    FROM bookings b
+    JOIN products p ON b.product_id = p.id
+    LEFT JOIN users u ON b.user_id = u.id
+    LEFT JOIN user_profiles up ON up.user_id = b.user_id
+    LEFT JOIN payment_transactions pt ON pt.booking_id = b.id
+    WHERE b.id = ? AND p.owner_id = ?
+    LIMIT 1`,
+    [bid, oid]
+  );
+
+  if (!rows[0]) return null;
+  const r = rows[0];
+
+  return {
+    id: r.id,
+    userId: r.user_id,
+    productId: r.product_id,
+    productName: r.product_name,
+    productImage: r.product_image || null,
+    productLocation: r.product_location || null,
+    userName: r.user_name,
+    customerEmail: r.customer_email || null,
+    customerPhone: r.customer_phone || null,
+    customerAddress: r.customer_address || null,
+    quantity: r.quantity,
+    totalPrice: parseFloat(r.total_price),
+    date: r.date ? new Date(r.date).toISOString().split('T')[0] : null,
+    status: r.status,
+    externalId: r.external_id,
+    paymentUrl: r.payment_url,
+    paymentStatus: r.payment_status,
+    paymentGateway: r.payment_gateway,
+    paymentMethod: r.payment_method || r.pt_payment_method || null,
+    paymentChannel: r.pt_payment_channel || null,
+    paidAt: r.paid_at || r.pt_paid_at || null,
+    gatewayTransactionId: r.pt_gateway_txn_id || null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    paymentExpiredAt: r.payment_expires_at || null,
+  };
+}
+
+async function update_agent_booking_status(booking_id, owner_id, new_status) {
+  const bid = Number(booking_id);
+  const oid = Number(owner_id);
+  if (!Number.isFinite(bid) || bid <= 0) throw new Error('Invalid booking_id');
+  if (!Number.isFinite(oid) || oid <= 0) throw new Error('Invalid owner_id');
+
+  const valid = new Set(['CONFIRMED', 'COMPLETED', 'CANCELLED']);
+  const st = String(new_status || '').toUpperCase();
+  if (!valid.has(st)) throw new Error('Invalid status. Must be CONFIRMED, COMPLETED, or CANCELLED');
+
+  // Verify ownership via products
+  const [rows] = await db.query(
+    `SELECT b.id, b.status
+     FROM bookings b
+     JOIN products p ON b.product_id = p.id
+     WHERE b.id = ? AND p.owner_id = ?
+     LIMIT 1`,
+    [bid, oid]
+  );
+
+  if (!rows[0]) throw new Error('Booking not found or not owned by this agent');
+
+  const current = rows[0].status;
+  // Validate transitions
+  if (st === 'CONFIRMED' && current !== 'PENDING') {
+    throw new Error('Can only confirm PENDING bookings');
+  }
+  if (st === 'COMPLETED' && current !== 'CONFIRMED') {
+    throw new Error('Can only complete CONFIRMED bookings');
+  }
+  if (st === 'CANCELLED' && (current === 'COMPLETED' || current === 'CANCELLED')) {
+    throw new Error(`Cannot cancel a booking that is already ${current}`);
+  }
+
+  await db.query(
+    'UPDATE bookings SET status = ?, updated_at = NOW() WHERE id = ?',
+    [st, bid]
+  );
+
+  return { id: bid, status: st };
+}
+
 module.exports = {
   upsert_agent_verification,
   find_verification_by_user_id,
   update_agent_verification_status,
   set_agent_verification_decision,
   list_agent_users_with_verification,
-  get_agent_dashboard_stats, 
-  get_agent_weekly_sales, 
+  get_agent_dashboard_stats,
+  get_agent_weekly_sales,
+  get_agent_bookings,
+  get_agent_booking_detail,
+  update_agent_booking_status,
 };
