@@ -20,6 +20,9 @@ Route.get('/bookings', requireAuth, agent.get_my_bookings);
 Route.get('/bookings/:id', requireAuth, agent.get_my_booking_detail);
 Route.patch('/bookings/:id/status', requireAuth, agent.update_my_booking_status);
 
+// CUSTOMER MANAGEMENT (CRM) ROUTES
+Route.get('/customers', requireAuth, agent.get_my_customers);
+
 // PRODUCT ROUTES
 Route.get('/products', requireAuth, agentProduct.list_my_products);
 Route.post('/products', requireAuth, agentProduct.create_my_product);
@@ -41,5 +44,11 @@ Route.put('/products/:id/status', requireAuth, agentProduct.update_my_product_st
 
 // USER PROFILE ROUTES
 Route.put('/profile/update', requireAuth, userController.update_my_profile);
+
+// SETTINGS & CONFIGURATION ROUTES (ENTERPRISE)
+Route.get('/profile/settings', requireAuth, agent.get_profile_settings);
+Route.put('/profile', requireAuth, upload.single('avatar'), agent.update_profile_details);
+Route.put('/password', requireAuth, agent.update_password);
+Route.post('/bank/request-change', requireAuth, agent.request_bank_change);
 
 module.exports = Route;

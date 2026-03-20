@@ -1,4 +1,5 @@
 const db = require('../configs/db');
+const bcrypt = require('bcrypt');
 
 const AGENT_TYPES = new Set(['INDIVIDUAL', 'CORPORATE']);
 const SPECIALIZATIONS = new Set(['TOUR', 'STAY', 'TRANSPORT']);
@@ -387,7 +388,7 @@ async function get_agent_bookings(owner_id, { status, payment_status, search, pa
       b.payment_expires_at,
       p.image_url AS product_image,
       u.email AS customer_email,
-      up.phone AS customer_phone
+      COALESCE(u.phone_number, up.phone) AS customer_phone
     FROM bookings b
     JOIN products p ON b.product_id = p.id
     LEFT JOIN users u ON b.user_id = u.id
@@ -439,7 +440,7 @@ async function get_agent_booking_detail(booking_id, owner_id) {
       p.location AS product_location,
       u.email AS customer_email,
       u.name AS customer_name_from_users,
-      up.phone AS customer_phone,
+      COALESCE(u.phone_number, up.phone) AS customer_phone,
       up.address_line AS customer_address,
       pt.status AS pt_status,
       pt.payment_method AS pt_payment_method,
@@ -530,6 +531,180 @@ async function update_agent_booking_status(booking_id, owner_id, new_status) {
   return { id: bid, status: st };
 }
 
+async function get_agent_customers(owner_id, filters = {}) {
+  const oid = Number(owner_id);
+  if (!Number.isFinite(oid) || oid <= 0) return { data: [], meta: { total: 0 } };
+
+  const { search, page, limit } = filters;
+  const params = [oid];
+  let where = 'WHERE p.owner_id = ?';
+
+  if (search && search.trim()) {
+    where += ` AND (u.name LIKE ? OR u.email LIKE ? OR up.phone LIKE ?)`;
+    const s = `%${search.trim()}%`;
+    params.push(s, s, s);
+  }
+
+  // Count total unique customers
+  const [countRows] = await db.query(
+    `SELECT COUNT(DISTINCT b.user_id) AS total
+     FROM bookings b
+     JOIN products p ON b.product_id = p.id
+     LEFT JOIN users u ON b.user_id = u.id
+     LEFT JOIN user_profiles up ON up.user_id = b.user_id
+     ${where}`,
+    params
+  );
+  const total = countRows[0]?.total || 0;
+
+  // Pagination
+  const pg = Math.max(1, Number(page));
+  const lim = Math.min(100, Math.max(1, Number(limit)));
+  const offset = (pg - 1) * lim;
+  const total_pages = Math.ceil(total / lim);
+
+  const [rows] = await db.query(
+    `SELECT
+       b.user_id,
+       MAX(u.name) AS user_name,
+       MAX(u.email) AS customer_email,
+       MAX(COALESCE(u.phone_number, up.phone)) AS customer_phone,
+       COUNT(b.id) AS total_bookings,
+       SUM(b.total_price) AS total_spent,
+       MAX(b.created_at) AS last_booking_date,
+       GROUP_CONCAT(b.product_name SEPARATOR '||') AS product_history_raw
+     FROM bookings b
+     JOIN products p ON b.product_id = p.id
+     LEFT JOIN users u ON b.user_id = u.id
+     LEFT JOIN user_profiles up ON up.user_id = b.user_id
+     ${where} AND b.status != 'CANCELLED'
+     GROUP BY b.user_id
+     ORDER BY total_spent DESC, last_booking_date DESC
+     LIMIT ? OFFSET ?`,
+    [...params, lim, offset]
+  );
+
+  const data = rows.map(r => {
+    // Determine Top Preference
+    const products = r.product_history_raw ? r.product_history_raw.split('||') : [];
+    const counts = {};
+    let topProduct = '-';
+    let maxCount = 0;
+    
+    for (const p of products) {
+      if (!p) continue;
+      counts[p] = (counts[p] || 0) + 1;
+      if (counts[p] > maxCount) {
+        maxCount = counts[p];
+        topProduct = p;
+      }
+    }
+
+    // Unique history
+    const history = Array.from(new Set(products)).filter(Boolean);
+
+    return {
+      userId: r.user_id,
+      userName: r.user_name || 'Guest User',
+      customerEmail: r.customer_email || '-',
+      customerPhone: r.customer_phone || '-',
+      totalBookings: r.total_bookings,
+      totalSpent: parseFloat(r.total_spent || 0),
+      lastBookingDate: r.last_booking_date,
+      topPreference: topProduct,
+      bookingHistory: history
+    };
+  });
+
+  return { data, meta: { page: pg, limit: lim, total, total_pages } };
+}
+
+async function get_agent_profile_settings(user_id) {
+  const uid = Number(user_id);
+  const [user] = await db.query(
+    `SELECT u.id, u.name, u.email, COALESCE(u.phone_number, up.phone) AS phone, up.address_line AS address, up.avatar_url AS avatar
+     FROM users u LEFT JOIN user_profiles up ON up.user_id = u.id WHERE u.id = ? LIMIT 1`, [uid]
+  );
+  if (!user[0]) return null;
+
+  const [biz] = await db.query(
+    `SELECT agent_type, company_name, tax_id, bank_name, bank_account_number, bank_account_holder, status
+     FROM agent_verifications WHERE user_id = ? AND status='VERIFIED' LIMIT 1`, [uid]
+  );
+
+  const [reqs] = await db.query(
+    `SELECT bank_name, bank_account_number, bank_account_holder, status, rejection_reason, created_at
+     FROM agent_bank_requests WHERE user_id = ? AND status='PENDING_VERIFICATION' ORDER BY created_at DESC LIMIT 1`, [uid]
+  );
+
+  return { profile: user[0], business: biz[0] || null, pending_bank_request: reqs[0] || null };
+}
+
+async function update_agent_profile(user_id, { name, phone, address, avatar }) {
+  const uid = Number(user_id);
+  await db.transaction(async (conn) => {
+    if (name || phone !== undefined) {
+      const updates = [];
+      const params = [];
+      if (name) { updates.push('name = ?'); params.push(name); }
+      if (phone !== undefined) { updates.push('phone_number = ?'); params.push(phone); }
+      if (updates.length > 0) {
+        params.push(uid);
+        await conn.query(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, params);
+      }
+    }
+    if (address !== undefined || avatar !== undefined || phone !== undefined) {
+      const a_phone = phone !== undefined ? phone : null;
+      const a_addr = address !== undefined ? address : null;
+      const a_ava = avatar !== undefined ? avatar : null;
+      await conn.query(
+        `INSERT INTO user_profiles (user_id, phone, address_line, avatar_url) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE 
+           phone = COALESCE(?, phone),
+           address_line = COALESCE(?, address_line),
+           avatar_url = COALESCE(?, avatar_url)`,
+        [uid, a_phone, a_addr, a_ava, a_phone, a_addr, a_ava]
+      );
+    }
+    await conn.query(
+      `INSERT INTO agent_audit_logs (user_id, action, details) VALUES (?, 'UPDATE_PROFILE', 'Agent updated profile details')`,
+      [uid]
+    );
+  });
+}
+
+async function update_agent_password(user_id, old_password, new_password) {
+  const uid = Number(user_id);
+  const [rows] = await db.query('SELECT password_hash FROM users WHERE id = ?', [uid]);
+  if (!rows[0] || !rows[0].password_hash) throw new Error('User not found');
+  const match = await bcrypt.compare(old_password, rows[0].password_hash);
+  if (!match) throw new Error('Incorrect old password');
+  
+  const hash = await bcrypt.hash(new_password, 10);
+  await db.transaction(async (conn) => {
+    await conn.query('UPDATE users SET password_hash = ? WHERE id = ?', [hash, uid]);
+    await conn.query(
+      `INSERT INTO agent_audit_logs (user_id, action, details) VALUES (?, 'CHANGE_PASSWORD', 'Agent changed password')`,
+      [uid]
+    );
+  });
+}
+
+async function request_agent_bank_change(user_id, { bank_name, bank_account_number, bank_account_holder }) {
+  const uid = Number(user_id);
+  await db.transaction(async (conn) => {
+    await conn.query(
+      `INSERT INTO agent_bank_requests (user_id, bank_name, bank_account_number, bank_account_holder, status)
+       VALUES (?, ?, ?, ?, 'PENDING_VERIFICATION')`,
+      [uid, bank_name, bank_account_number, bank_account_holder]
+    );
+    await conn.query(
+      `INSERT INTO agent_audit_logs (user_id, action, details) VALUES (?, 'REQUEST_BANK_CHANGE', ?)`,
+      [uid, `Requested change to ${bank_name} - ${bank_account_number}`]
+    );
+  });
+}
+
 module.exports = {
   upsert_agent_verification,
   find_verification_by_user_id,
@@ -541,4 +716,9 @@ module.exports = {
   get_agent_bookings,
   get_agent_booking_detail,
   update_agent_booking_status,
+  get_agent_customers,
+  get_agent_profile_settings,
+  update_agent_profile,
+  update_agent_password,
+  request_agent_bank_change,
 };
