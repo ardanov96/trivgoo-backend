@@ -4,36 +4,32 @@ const ctrl       = require('../controllers/promo_campaign');
 const uploadCtrl = require('../controllers/upload_banner');
 const upload     = require('../middleware/upload_banner');
 
-// ─── PUBLIC routes ────────────────────────────────────────────────────────────
-router.get('/active',              ctrl.get_active);
+// ─── PUBLIC routes (tanpa param) — HARUS paling atas ─────────────────────────
+router.get('/active',                    ctrl.get_active);
+router.post('/flash-sale',               ctrl.flash_sale);
 
-// Analytics — HARUS sebelum /:id
-router.get('/analytics/summary',   ctrl.analytics_summary);
-router.get('/analytics/daily',     ctrl.analytics_daily);
+// ─── Flash sale requests — HARUS sebelum /:id ────────────────────────────────
+router.get('/flash-sale-requests',       ctrl.list_flash_sale_requests);
+router.patch('/flash-sale-requests/:id', ctrl.update_flash_sale_request);
 
-// ─── UPLOAD BANNER — HARUS sebelum /:id ──────────────────────────────────────
-router.post('/upload-banner',      upload.single('banner'), uploadCtrl.upload_banner);
-router.delete('/upload-banner',    uploadCtrl.delete_banner);
+// ─── Analytics — HARUS sebelum /:id ──────────────────────────────────────────
+router.get('/analytics/summary',         ctrl.analytics_summary);
+router.get('/analytics/daily',           ctrl.analytics_daily);
 
-// ─── Route spesifik /:id/* — HARUS sebelum /:id generic ─────────────────────
-router.get('/:id/products',        ctrl.get_campaign_products);
+// ─── Upload banner — HARUS sebelum /:id ──────────────────────────────────────
+router.post('/upload-banner',            upload.single('banner'), uploadCtrl.upload_banner);
+router.delete('/upload-banner',          uploadCtrl.delete_banner);
 
-// ── NEW: Agent join campaign ──────────────────────────────────────────────────
-// POST /api/v1/promo-campaigns/:id/join
-router.post('/:id/join',           ctrl.join_campaign);
+// ─── Routes dengan /:id — HARUS setelah semua route literal ──────────────────
+router.get('/:id/products',              ctrl.get_campaign_products);
+router.post('/:id/join',                 ctrl.join_campaign);
+router.get('/:id',                       ctrl.get_one);
+router.put('/:id',                       ctrl.update);
+router.patch('/:id/toggle',              ctrl.toggle);
+router.delete('/:id',                    ctrl.remove);
 
-router.post('/flash-sale', ctrl.flash_sale);
-
-// ─── Generic /:id ─────────────────────────────────────────────────────────────
-router.get('/:id',                 ctrl.get_one);
-
-// ─── ADMIN routes ─────────────────────────────────────────────────────────────
-router.get('/',                    ctrl.list_all);
-router.post('/',                   ctrl.create);
-router.put('/:id',                 ctrl.update);
-router.patch('/:id/toggle',        ctrl.toggle);
-router.delete('/:id',              ctrl.remove);
-
-
+// ─── ADMIN routes (tanpa param) ───────────────────────────────────────────────
+router.get('/',                          ctrl.list_all);
+router.post('/',                         ctrl.create);
 
 module.exports = router;

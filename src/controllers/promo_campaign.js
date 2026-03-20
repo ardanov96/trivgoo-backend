@@ -322,7 +322,6 @@ async function flash_sale(req, res) {
     if (!user) return misc.response(res, 401, true, 'Unauthorized');
 
     const { product_id, discount_pct, sale_price } = req.body;
-
     if (!product_id || !discount_pct) {
       return misc.response(res, 400, true, 'product_id dan discount_pct wajib diisi');
     }
@@ -332,20 +331,113 @@ async function flash_sale(req, res) {
       return misc.response(res, 400, true, 'discount_pct harus antara 1–99');
     }
 
-    console.log('[flash_sale] Agent', user.id, 'set flash sale:', {
-      product_id: Number(product_id),
-      discount_pct: pct,
-      sale_price: sale_price ? Number(sale_price) : null,
-    });
+    const { pool: db } = require('../configs/db');
+
+    // Cek apakah sudah ada request pending untuk produk ini
+    const [[existing]] = await db.execute(
+      `SELECT id FROM flash_sale_requests WHERE product_id = ? AND status = 'pending' LIMIT 1`,
+      [Number(product_id)]
+    );
+    if (existing) {
+      return misc.response(res, 409, true, 'Produk ini sudah memiliki request flash sale yang pending');
+    }
+
+    const [ins] = await db.execute(
+      `INSERT INTO flash_sale_requests (product_id, agent_id, discount_pct, sale_price, status)
+       VALUES (?, ?, ?, ?, 'pending')`,
+      [Number(product_id), user.id, pct, sale_price ? Number(sale_price) : null]
+    );
 
     return misc.response(res, 200, false, 'Flash sale berhasil diajukan', {
+      id:           ins.insertId,
       product_id:   Number(product_id),
       discount_pct: pct,
       sale_price:   sale_price ? Number(sale_price) : null,
+      status:       'pending',
     });
   } catch (e) {
     console.error('[promo_campaign.flash_sale]', e);
     return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
+  }
+}
+
+async function list_flash_sale_requests(req, res) {
+  try {
+    ensure_admin(req);
+    const { pool: db } = require('../configs/db');
+    const { status, page = 1, limit = 20 } = req.query;
+    const offset = (Number(page) - 1) * Number(limit);
+
+    let where = 'WHERE 1=1';
+    const params = [];
+    if (status) { where += ' AND fsr.status = ?'; params.push(status); }
+
+    const [rows] = await db.execute(
+      `SELECT
+        fsr.*,
+        ap.name       AS product_name,
+        ap.price      AS product_price,
+        ap.currency   AS product_currency,
+        ap.image_url  AS product_image,
+        u.name        AS agent_name
+      FROM flash_sale_requests fsr
+      JOIN products ap ON ap.id = fsr.product_id
+      JOIN users u ON u.id = fsr.agent_id
+      ${where}
+      ORDER BY fsr.created_at DESC
+      LIMIT ${Number(limit)} OFFSET ${offset}`,
+      params
+    );
+
+    const [[countRow]] = await db.execute(
+      `SELECT COUNT(*) AS total FROM flash_sale_requests fsr ${where}`,
+      params
+    );
+
+    return misc.response(res, 200, false, 'OK', {
+      data: rows,
+      meta: {
+        total: Number(countRow.total),
+        page: Number(page),
+        limit: Number(limit),
+        total_pages: Math.ceil(Number(countRow.total) / Number(limit)),
+      },
+    });
+  } catch (e) {
+    console.error('[list_flash_sale_requests]', e);
+    return misc.response(res, e.status_code || 500, true, e.message);
+  }
+}
+
+async function update_flash_sale_request(req, res) {
+  try {
+    ensure_admin(req);
+    const { pool: db } = require('../configs/db');
+    const id = Number(req.params.id);
+    const { action } = req.body;
+
+    if (!['approve', 'reject'].includes(action)) {
+      return misc.response(res, 400, true, 'action harus approve atau reject');
+    }
+
+    const [[row]] = await db.execute(
+      `SELECT * FROM flash_sale_requests WHERE id = ? LIMIT 1`, [id]
+    );
+    if (!row) return misc.response(res, 404, true, 'Request tidak ditemukan');
+    if (row.status !== 'pending') {
+      return misc.response(res, 400, true, 'Request ini sudah diproses');
+    }
+
+    const newStatus = action === 'approve' ? 'approved' : 'rejected';
+    await db.execute(
+      `UPDATE flash_sale_requests SET status = ?, updated_at = NOW() WHERE id = ?`,
+      [newStatus, id]
+    );
+
+    return misc.response(res, 200, false, `Request ${newStatus}`, { id, status: newStatus });
+  } catch (e) {
+    console.error('[update_flash_sale_request]', e);
+    return misc.response(res, e.status_code || 500, true, e.message);
   }
 }
 
@@ -360,6 +452,8 @@ module.exports = {
   toggle,
   join_campaign,
   flash_sale, 
+  list_flash_sale_requests,
+  update_flash_sale_request,
   analytics_summary,
   analytics_daily,
 };

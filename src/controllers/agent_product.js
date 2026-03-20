@@ -7,8 +7,8 @@ const {
   update_product,
   get_product_by_id_for_owner,
   list_products_by_owner,
-  get_product_vouchers,       // ← NEW
-  set_product_vouchers,       // ← NEW
+  get_product_vouchers,
+  set_product_vouchers,
   add_product_image_for_owner,
   update_product_image_for_owner,
   list_product_images_for_owner,
@@ -58,7 +58,41 @@ function ensure_array(v) {
 async function list_my_products(req, res) {
   try {
     const user = ensure_agent(req);
-    const data = await list_products_by_owner(user.id);
+    const { pool: db } = require('../configs/db');
+
+    // Ambil produk milik agent + flash_sale_status dari flash_sale_requests
+    const [rows] = await db.execute(
+      `SELECT
+         p.*,
+         (
+           SELECT fsr.status
+           FROM flash_sale_requests fsr
+           WHERE fsr.product_id = p.id
+             AND fsr.status IN ('pending', 'approved')
+           ORDER BY fsr.created_at DESC
+           LIMIT 1
+         ) AS flash_sale_status
+       FROM products p
+       WHERE p.owner_id = ?
+       ORDER BY p.created_at DESC`,
+      [user.id]
+    );
+
+    // Enrich tiap produk dengan images & details seperti biasa
+    const base = await list_products_by_owner(user.id);
+
+    // Buat map status berdasarkan product_id dari query di atas
+    const statusMap = {};
+    for (const row of rows) {
+      statusMap[row.id] = row.flash_sale_status || null;
+    }
+
+    // Inject flash_sale_status ke setiap produk
+    const data = base.map(p => ({
+      ...p,
+      flash_sale_status: statusMap[p.id] ?? null,
+    }));
+
     return misc.response(res, 200, false, 'OK', data);
   } catch (e) {
     console.error(e);
@@ -192,19 +226,14 @@ async function update_my_product_status(req, res) {
   }
 }
 
-// ── NEW: Voucher endpoints ────────────────────────────────────────────────────
+// ── Voucher endpoints ─────────────────────────────────────────────────────────
 
-/**
- * GET /agent/products/:id/vouchers
- * Ambil daftar voucher yang terlampir ke product milik agent ini.
- */
 async function list_my_product_vouchers(req, res) {
   try {
     const user       = ensure_agent(req);
     const product_id = Number.parseInt(req.params.id, 10);
     if (!product_id) return misc.response(res, 400, true, 'product_id tidak valid');
 
-    // Pastikan product milik agent ini
     const product = await get_product_by_id_for_owner(product_id, user.id);
     if (!product) return misc.response(res, 404, true, 'Product tidak ditemukan');
 
@@ -216,11 +245,6 @@ async function list_my_product_vouchers(req, res) {
   }
 }
 
-/**
- * PUT /agent/products/:id/vouchers
- * Body: { voucher_ids: number[] }
- * Replace semua voucher yang terlampir ke product.
- */
 async function set_my_product_vouchers(req, res) {
   try {
     const user       = ensure_agent(req);
@@ -241,7 +265,7 @@ async function set_my_product_vouchers(req, res) {
   }
 }
 
-// ── Image endpoints (tidak berubah) ──────────────────────────────────────────
+// ── Image endpoints ───────────────────────────────────────────────────────────
 
 async function list_my_product_images(req, res) {
   try {
@@ -357,8 +381,8 @@ module.exports = {
   delete_my_product,
   update_my_product_status,
 
-  list_my_product_vouchers,   // ← NEW
-  set_my_product_vouchers,    // ← NEW
+  list_my_product_vouchers,
+  set_my_product_vouchers,
 
   list_my_product_images,
   add_my_product_images,
