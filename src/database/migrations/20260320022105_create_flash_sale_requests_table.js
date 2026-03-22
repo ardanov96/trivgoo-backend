@@ -1,4 +1,6 @@
-exports.up = function(knex) {
+exports.up = async function(knex) {
+  const exists = await knex.schema.hasTable('flash_sale_requests');
+  if (exists) return;
   return knex.schema.createTable('flash_sale_requests', (table) => {
     table.increments('id').primary();
     table.integer('product_id').notNullable();

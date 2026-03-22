@@ -2,9 +2,10 @@
  * @param { import("knex").Knex } knex
  * @returns { Promise<void> }
  */
-exports.up = function(knex) {
-  return knex.schema
-    .createTable('agent_audit_logs', (table) => {
+exports.up = async function(knex) {
+  const hasAudit = await knex.schema.hasTable('agent_audit_logs');
+  if (!hasAudit) {
+    await knex.schema.createTable('agent_audit_logs', (table) => {
       table.increments('id');
       table.bigInteger('user_id').unsigned().notNullable();
       table.string('action').notNullable();
@@ -13,8 +14,12 @@ exports.up = function(knex) {
       table.timestamp('created_at').defaultTo(knex.fn.now());
 
       table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE');
-    })
-    .createTable('agent_bank_requests', (table) => {
+    });
+  }
+
+  const hasBank = await knex.schema.hasTable('agent_bank_requests');
+  if (!hasBank) {
+    await knex.schema.createTable('agent_bank_requests', (table) => {
       table.increments('id');
       table.bigInteger('user_id').unsigned().notNullable();
       table.string('bank_name').notNullable();
@@ -29,6 +34,7 @@ exports.up = function(knex) {
       table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE');
       table.foreign('reviewed_by').references('id').inTable('users').onDelete('SET NULL');
     });
+  }
 };
 
 /**

@@ -82,6 +82,8 @@ const getMyBookings = async (req, res) => {
     b.payment_url as paymentUrl,
     b.payment_status as paymentStatus,
     b.created_at as createdAt,
+    b.original_date as originalDate,
+    b.reschedule_count as rescheduleCount,
     p.image_url as productImage
   FROM bookings b
   LEFT JOIN products p ON b.product_id = p.id
@@ -193,4 +195,85 @@ const cancelMyBooking = async (req, res) => {
   }
 };
 
-module.exports = { getAllBookings, updateBookingStatus, getMyBookings, cancelMyBooking };
+const rescheduleMyBooking = async (req, res) => {
+  const { id } = req.params;
+  const { new_date } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return response(res, 401, true, 'Unauthorized', null);
+  }
+
+  if (!new_date) {
+    return response(res, 400, true, 'Tanggal baru wajib diisi', null);
+  }
+
+  // Validasi format tanggal
+  const parsedDate = new Date(new_date);
+  if (isNaN(parsedDate.getTime())) {
+    return response(res, 400, true, 'Format tanggal tidak valid', null);
+  }
+
+  // Tanggal baru harus di masa depan
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (parsedDate < today) {
+    return response(res, 400, true, 'Tanggal baru harus di masa depan', null);
+  }
+
+  try {
+    const [rows] = await db.query(
+      'SELECT id, status, payment_status, date, original_date, reschedule_count FROM bookings WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+
+    if (rows.length === 0) {
+      return response(res, 404, true, 'Booking tidak ditemukan', null);
+    }
+
+    const booking = rows[0];
+
+    // Hanya booking yang sudah lunas (PAID) dan aktif yang bisa di-reschedule
+    if (booking.payment_status !== 'PAID' || booking.status === 'CANCELLED' || booking.status === 'COMPLETED') {
+      return response(res, 400, true,
+        `Booking tidak dapat di-reschedule. Pastikan pembayaran sudah lunas dan status belum dibatalkan/selesai.`,
+        null
+      );
+    }
+
+    // Maksimal 1x reschedule
+    if (booking.reschedule_count >= 1) {
+      return response(res, 400, true,
+        'Booking ini sudah pernah di-reschedule. Maksimal 1 kali reschedule per booking.',
+        null
+      );
+    }
+
+    // Simpan original_date hanya jika pertama kali reschedule
+    const originalDate = booking.original_date || booking.date;
+
+    await db.query(
+      `UPDATE bookings 
+       SET date = ?, 
+           original_date = ?, 
+           reschedule_count = reschedule_count + 1, 
+           rescheduled_at = NOW(),
+           updated_at = NOW() 
+       WHERE id = ? AND user_id = ?`,
+      [new_date, originalDate, id, userId]
+    );
+
+    return response(res, 200, false, 'Booking berhasil di-reschedule', {
+      id: Number(id),
+      newDate: new_date,
+      originalDate: originalDate ? new Date(originalDate).toISOString().split('T')[0] : null,
+      rescheduleCount: booking.reschedule_count + 1,
+    });
+
+  } catch (error) {
+    console.error('Error rescheduling booking:', error);
+    return response(res, 500, true, 'Gagal melakukan reschedule booking', null);
+  }
+};
+
+module.exports = { getAllBookings, updateBookingStatus, getMyBookings, cancelMyBooking, rescheduleMyBooking };

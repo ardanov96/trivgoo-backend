@@ -15,4 +15,7 @@ router.patch('/:id/status', requireAuth, bookingController.updateBookingStatus);
 // Cancel booking
 router.patch('/:id/cancel', requireAuth, bookingController.cancelMyBooking);
 
+// Reschedule booking
+router.patch('/:id/reschedule', requireAuth, bookingController.rescheduleMyBooking);
+
 module.exports = router;
