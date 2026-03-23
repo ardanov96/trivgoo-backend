@@ -43,13 +43,18 @@ function format_campaign(row) {
     created_by:      row.created_by,
     created_at:      row.created_at,
     updated_at:      row.updated_at,
+    // Jumlah total produk yang join (semua status)
+    product_count:   Number(row.product_count || 0),
+    // Jumlah produk yang menunggu review admin
+    pending_count:   Number(row.pending_count || 0),
   };
 }
 
 // ─── Queries ──────────────────────────────────────────────────────────────────
 
 /**
- * List semua campaign dengan filter opsional
+ * List semua campaign dengan filter opsional.
+ * Menyertakan product_count dan pending_count via subquery.
  */
 async function list_campaigns({ q, type, active_only, page = 1, limit = 20 } = {}) {
   const offset = (Number(page) - 1) * Number(limit);
@@ -70,7 +75,22 @@ async function list_campaigns({ q, type, active_only, page = 1, limit = 20 } = {
   }
 
   const [rows] = await db.execute(
-    `SELECT pc.*, mt.name AS min_tier_name
+    `SELECT
+       pc.*,
+       mt.name AS min_tier_name,
+       (
+         SELECT COUNT(*)
+         FROM promo_campaign_products pcp
+         WHERE pcp.campaign_id = pc.id
+           AND pcp.scope_type  = 'product'
+       ) AS product_count,
+       (
+         SELECT COUNT(*)
+         FROM promo_campaign_products pcp
+         WHERE pcp.campaign_id = pc.id
+           AND pcp.scope_type  = 'product'
+           AND pcp.status      = 'pending'
+       ) AS pending_count
      FROM promo_campaigns pc
      LEFT JOIN membership_tiers mt ON mt.id = pc.min_tier_id
      ${where}
@@ -85,10 +105,11 @@ async function list_campaigns({ q, type, active_only, page = 1, limit = 20 } = {
   );
 
   return {
-    campaigns: rows.map(format_campaign),
-    total: Number(countRow.total),
-    page: Number(page),
-    limit: Number(limit),
+    campaigns:   rows.map(format_campaign),
+    total:       Number(countRow.total),
+    page:        Number(page),
+    limit:       Number(limit),
+    total_pages: Math.ceil(Number(countRow.total) / Number(limit)),
   };
 }
 
@@ -198,21 +219,21 @@ async function update_campaign(id, payload) {
 
     const set_field = (col, val) => { fields.push(`${col} = ?`); values.push(val); };
 
-    if (payload.name        !== undefined) set_field('name',            payload.name);
-    if (payload.description !== undefined) set_field('description',     payload.description ?? null);
-    if (payload.banner_image!== undefined) set_field('banner_image',    payload.banner_image ?? null);
-    if (payload.type        !== undefined) set_field('type',            payload.type);
+    if (payload.name           !== undefined) set_field('name',            payload.name);
+    if (payload.description    !== undefined) set_field('description',     payload.description ?? null);
+    if (payload.banner_image   !== undefined) set_field('banner_image',    payload.banner_image ?? null);
+    if (payload.type           !== undefined) set_field('type',            payload.type);
     if (payload.discount_type  !== undefined) set_field('discount_type',   payload.discount_type);
     if (payload.discount_value !== undefined) set_field('discount_value',  Number(payload.discount_value));
     if (payload.max_discount   !== undefined) set_field('max_discount',    payload.max_discount != null ? Number(payload.max_discount) : null);
     if (payload.min_transaction!== undefined) set_field('min_transaction', Number(payload.min_transaction));
-    if (payload.scope        !== undefined) set_field('scope',          payload.scope);
-    if (payload.min_tier_id  !== undefined) set_field('min_tier_id',    payload.min_tier_id ?? null);
-    if (payload.starts_at    !== undefined) set_field('starts_at',      payload.starts_at);
-    if (payload.ends_at      !== undefined) set_field('ends_at',        payload.ends_at);
-    if (payload.max_usage    !== undefined) set_field('max_usage',      payload.max_usage != null ? Number(payload.max_usage) : null);
-    if (payload.per_user     !== undefined) set_field('per_user',       Number(payload.per_user));
-    if (payload.is_active    !== undefined) set_field('is_active',      Number(payload.is_active));
+    if (payload.scope          !== undefined) set_field('scope',           payload.scope);
+    if (payload.min_tier_id    !== undefined) set_field('min_tier_id',     payload.min_tier_id ?? null);
+    if (payload.starts_at      !== undefined) set_field('starts_at',       payload.starts_at);
+    if (payload.ends_at        !== undefined) set_field('ends_at',         payload.ends_at);
+    if (payload.max_usage      !== undefined) set_field('max_usage',       payload.max_usage != null ? Number(payload.max_usage) : null);
+    if (payload.per_user       !== undefined) set_field('per_user',        Number(payload.per_user));
+    if (payload.is_active      !== undefined) set_field('is_active',       Number(payload.is_active));
 
     set_field('updated_at', new Date());
 
@@ -264,7 +285,7 @@ async function toggle_campaign(id) {
 }
 
 /**
- * Ambil produk yang masuk dalam scope campaign
+ * Ambil produk yang masuk dalam scope campaign (untuk publik)
  */
 async function get_products_by_campaign(id) {
   const [[campaign]] = await db.execute(`SELECT scope FROM promo_campaigns WHERE id = ? LIMIT 1`, [id]);
@@ -285,7 +306,7 @@ async function get_products_by_campaign(id) {
   if (!scope_items.length) return [];
 
   if (campaign.scope === 'category') {
-    const cat_ids = scope_items.map((s) => s.scope_id);
+    const cat_ids      = scope_items.map((s) => s.scope_id);
     const placeholders = cat_ids.map(() => '?').join(',');
     const [rows] = await db.execute(
       `SELECT p.id, p.name, p.price, p.currency, p.category_id, p.image_url, p.location
@@ -298,7 +319,7 @@ async function get_products_by_campaign(id) {
   }
 
   if (campaign.scope === 'product') {
-    const prod_ids = scope_items.map((s) => s.scope_id);
+    const prod_ids     = scope_items.map((s) => s.scope_id);
     const placeholders = prod_ids.map(() => '?').join(',');
     const [rows] = await db.execute(
       `SELECT p.id, p.name, p.price, p.currency, p.category_id, p.image_url, p.location
@@ -339,7 +360,7 @@ async function get_analytics_summary({ source_type, date_from, date_to } = {}) {
        SUM(pa.total_discount_given) AS total_discount_given,
        SUM(pa.total_revenue)        AS total_revenue
      FROM promo_analytics pa
-     LEFT JOIN vouchers v        ON v.id  = pa.source_id AND pa.source_type = 'voucher'
+     LEFT JOIN vouchers       v  ON v.id  = pa.source_id AND pa.source_type = 'voucher'
      LEFT JOIN promo_campaigns pc ON pc.id = pa.source_id AND pa.source_type = 'campaign'
      ${where}
      GROUP BY pa.source_type, pa.source_id
@@ -415,6 +436,81 @@ async function record_analytics(source_type, source_id, {
   );
 }
 
+/**
+ * Ambil produk yang sudah join ke campaign tertentu (admin view).
+ * Support pagination agar tidak overload jika produk banyak.
+ *
+ * @param {number} campaign_id
+ * @param {number} page   - halaman (default 1)
+ * @param {number} limit  - item per halaman (default 8)
+ */
+async function get_campaign_joined_products(campaign_id, page = 1, limit = 8) {
+  const offset = (Number(page) - 1) * Number(limit);
+
+  const [rows] = await db.execute(
+    `SELECT
+       pcp.id              AS join_id,
+       pcp.campaign_id,
+       pcp.scope_id        AS product_id,
+       pcp.discount_pct,
+       pcp.sale_price,
+       pcp.status          AS join_status,
+       pcp.joined_at,
+       p.name              AS product_name,
+       p.price             AS product_price,
+       p.currency          AS product_currency,
+       p.image_url         AS product_image,
+       p.location          AS product_location,
+       u.id                AS agent_id,
+       u.name              AS agent_name
+     FROM promo_campaign_products pcp
+     JOIN products p ON p.id  = pcp.scope_id
+     JOIN users    u ON u.id  = p.owner_id
+     WHERE pcp.campaign_id = ?
+       AND pcp.scope_type  = 'product'
+     ORDER BY
+       FIELD(pcp.status, 'pending', 'active', 'inactive', 'rejected'),
+       pcp.joined_at DESC
+     LIMIT ${Number(limit)} OFFSET ${offset}`,
+    [campaign_id]
+  );
+
+  const [[countRow]] = await db.execute(
+    `SELECT COUNT(*) AS total
+     FROM promo_campaign_products pcp
+     WHERE pcp.campaign_id = ?
+       AND pcp.scope_type  = 'product'`,
+    [campaign_id]
+  );
+
+  const total = Number(countRow.total);
+
+  return {
+    products: rows.map(r => ({
+      join_id:          r.join_id,
+      campaign_id:      r.campaign_id,
+      product_id:       r.product_id,
+      product_name:     r.product_name,
+      product_price:    Number(r.product_price),
+      product_currency: r.product_currency,
+      product_image:    r.product_image,
+      product_location: r.product_location,
+      discount_pct:     r.discount_pct != null ? Number(r.discount_pct) : null,
+      sale_price:       r.sale_price   != null ? Number(r.sale_price)   : null,
+      join_status:      r.join_status  ?? 'pending',
+      joined_at:        r.joined_at,
+      agent_id:         r.agent_id,
+      agent_name:       r.agent_name,
+    })),
+    meta: {
+      total,
+      page:        Number(page),
+      limit:       Number(limit),
+      total_pages: Math.ceil(total / Number(limit)),
+    },
+  };
+}
+
 module.exports = {
   list_campaigns,
   get_active_campaigns,
@@ -427,4 +523,5 @@ module.exports = {
   get_analytics_summary,
   get_analytics_daily,
   record_analytics,
+  get_campaign_joined_products,
 };
