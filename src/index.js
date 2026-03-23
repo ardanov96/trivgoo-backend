@@ -4,6 +4,7 @@ const Route = express.Router();
 
 const publicRoutes    = require("./routes/public");
 const auth            = require("./routes/auth");
+const users           = require("./routes/user");
 const agent           = require("./routes/agent");
 const admin           = require("./routes/admin");
 const media           = require("./routes/media");
@@ -18,6 +19,7 @@ const chat            = require("./routes/chat");
 
 Route.use("/", publicRoutes);
 Route.use("/auth", auth);
+Route.use("/users", users);
 Route.use("/agent", agent);
 Route.use("/chat", chat);
 Route.use("/admin", admin);
