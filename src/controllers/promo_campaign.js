@@ -452,18 +452,19 @@ async function join_campaign(req, res) {
 async function get_joined_products(req, res) {
   try {
     ensure_admin(req);
-
+ 
     const id = Number.parseInt(req.params.id, 10);
     if (!id) return misc.response(res, 400, true, 'id tidak valid');
-
+ 
     const campaign = await get_campaign_by_id(id);
     if (!campaign) return misc.response(res, 404, true, 'Campaign tidak ditemukan');
-
-    const page  = to_number_or_null(req.query.page)  || 1;
-    const limit = to_number_or_null(req.query.limit) || 8;
-
-    const result = await get_campaign_joined_products(id, page, limit);
-
+ 
+    const page          = to_number_or_null(req.query.page)   || 1;
+    const limit         = to_number_or_null(req.query.limit)  || 8;
+    const status_filter = req.query.status || null; // opsional filter
+ 
+    const result = await get_campaign_joined_products(id, page, limit, status_filter);
+ 
     return misc.response(res, 200, false, 'OK', {
       campaign,
       products: result.products,
@@ -471,6 +472,37 @@ async function get_joined_products(req, res) {
     });
   } catch (e) {
     console.error('[promo_campaign.get_joined_products]', e);
+    return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
+  }
+}
+
+/**
+ * GET /api/v1/promo-campaigns/:id/products-public
+ * Endpoint publik — hanya tampilkan produk berstatus 'active'.
+ * Tidak butuh login / admin.
+ */
+async function get_public_joined_products(req, res) {
+  try {
+    const id = Number.parseInt(req.params.id, 10);
+    if (!id) return misc.response(res, 400, true, 'id tidak valid');
+ 
+    const campaign = await get_campaign_by_id(id);
+    if (!campaign) return misc.response(res, 404, true, 'Campaign tidak ditemukan');
+    if (!campaign.is_active) return misc.response(res, 404, true, 'Campaign tidak aktif');
+ 
+    const page  = to_number_or_null(req.query.page)  || 1;
+    const limit = to_number_or_null(req.query.limit) || 12;
+ 
+    // Hanya tampilkan produk yang sudah diapprove (status = active)
+    const result = await get_campaign_joined_products(id, page, limit, 'active');
+ 
+    return misc.response(res, 200, false, 'OK', {
+      campaign,
+      products: result.products,
+      meta:     result.meta,
+    });
+  } catch (e) {
+    console.error('[promo_campaign.get_public_joined_products]', e);
     return misc.response(res, e.status_code || 500, true, e.message || 'Internal server error');
   }
 }
@@ -694,6 +726,7 @@ module.exports = {
   get_one,
   get_campaign_products,
   get_joined_products,
+  get_public_joined_products,
   review_joined_product,
   my_submissions,
   list_all,

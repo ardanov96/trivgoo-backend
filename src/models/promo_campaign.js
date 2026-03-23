@@ -444,9 +444,12 @@ async function record_analytics(source_type, source_id, {
  * @param {number} page   - halaman (default 1)
  * @param {number} limit  - item per halaman (default 8)
  */
-async function get_campaign_joined_products(campaign_id, page = 1, limit = 8) {
+async function get_campaign_joined_products(campaign_id, page = 1, limit = 8, status_filter = null) {
   const offset = (Number(page) - 1) * Number(limit);
-
+ 
+  // Tambah WHERE clause untuk status jika ada filter
+  const status_where = status_filter ? `AND pcp.status = '${status_filter}'` : '';
+ 
   const [rows] = await db.execute(
     `SELECT
        pcp.id              AS join_id,
@@ -468,23 +471,25 @@ async function get_campaign_joined_products(campaign_id, page = 1, limit = 8) {
      JOIN users    u ON u.id  = p.owner_id
      WHERE pcp.campaign_id = ?
        AND pcp.scope_type  = 'product'
+       ${status_where}
      ORDER BY
        FIELD(pcp.status, 'pending', 'active', 'inactive', 'rejected'),
        pcp.joined_at DESC
      LIMIT ${Number(limit)} OFFSET ${offset}`,
     [campaign_id]
   );
-
+ 
   const [[countRow]] = await db.execute(
     `SELECT COUNT(*) AS total
      FROM promo_campaign_products pcp
      WHERE pcp.campaign_id = ?
-       AND pcp.scope_type  = 'product'`,
+       AND pcp.scope_type  = 'product'
+       ${status_where}`,
     [campaign_id]
   );
-
+ 
   const total = Number(countRow.total);
-
+ 
   return {
     products: rows.map(r => ({
       join_id:          r.join_id,
