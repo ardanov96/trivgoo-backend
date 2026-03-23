@@ -3,6 +3,7 @@ const misc = require('../helpers/response');
 const payment_service = require('../services/payment_service');
 const { execute } = require('../configs/db');
 const { send_payment_success_email, send_new_booking_notification_email } = require('../helpers/mailer');
+const { sendPushNotification } = require('../helpers/fcm');
 
 /**
  * POST /api/v1/payment/create-payment
@@ -314,7 +315,7 @@ const handleNotification = async (req, res) => {
 
       try {
         const bookingData = await execute(
-          `SELECT b.external_id, b.product_name, b.total_price, b.user_name, u.email as user_email, b.date
+          `SELECT b.external_id, b.product_name, b.total_price, b.user_name, b.user_id, u.email as user_email, b.date
            FROM bookings b
            LEFT JOIN users u ON b.user_id = u.id
            WHERE b.external_id = ? LIMIT 1`,
@@ -337,6 +338,16 @@ const handleNotification = async (req, res) => {
             );
             console.log(`[PAYMENT] Success notification email sent to ${toEmail}`);
           }
+          
+          // Kirim PUSH Notification ke Customer
+          if (booking.user_id) {
+            await sendPushNotification(
+              booking.user_id,
+              'Hore! Pembayaran Sukses 🎉',
+              `Pembayaran untuk ${booking.product_name || 'booking'} senilai Rp ${Number(booking.total_price).toLocaleString('id-ID')} berhasil kami terima. E-ticket Anda sudah siap!`,
+              { bookingId: String(booking.external_id), type: 'invoice_ready' }
+            );
+          }
         }
       } catch (emailErr) {
         console.error('[EMAIL NOTIF] Failed to send payment success email:', emailErr.message);
@@ -346,7 +357,7 @@ const handleNotification = async (req, res) => {
       // ── Kirim notifikasi ke AGENT (owner produk) ───────────────────────
       try {
         const agentData = await execute(
-          `SELECT u.email AS agent_email, u.name AS agent_name,
+          `SELECT u.email AS agent_email, u.name AS agent_name, u.id AS agent_id,
                   b.external_id, b.product_name, b.user_name, b.total_price, b.quantity, b.date
            FROM bookings b
            JOIN products p ON b.product_id = p.id
@@ -370,6 +381,16 @@ const handleNotification = async (req, res) => {
             }
           );
           console.log(`[PAYMENT] Agent notification email sent to ${agent.agent_email}`);
+          
+          // Kirim PUSH Notification ke Agent Workspace
+          if (agent.agent_id) {
+            await sendPushNotification(
+              agent.agent_id,
+              'Booking Baru Dibayar! 💰',
+              `${agent.user_name} berhasil membayar ${agent.quantity} pax tiket untuk ${agent.product_name}. Segera konfirmasi dari dashboard Agen!`,
+              { type: 'incoming_paid_booking', bookingId: String(agent.external_id) }
+            );
+          }
         }
       } catch (agentEmailErr) {
         console.error('[EMAIL NOTIF] Failed to send agent booking notification:', agentEmailErr.message);
