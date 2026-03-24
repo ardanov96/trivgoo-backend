@@ -1,9 +1,17 @@
 // src/controllers/payment.js
 const misc = require('../helpers/response');
 const payment_service = require('../services/payment_service');
-const { execute } = require('../configs/db');
+const { execute, query } = require('../configs/db');
 const { send_payment_success_email, send_new_booking_notification_email } = require('../helpers/mailer');
 const { sendPushNotification } = require('../helpers/fcm');
+
+// Konversi ISO 8601 (2026-03-24T01:00:00.000Z) -> MySQL DATETIME (2026-03-24 01:00:00)
+function toMySQLDatetime(val) {
+  if (!val) return null;
+  const d = new Date(val);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 19).replace('T', ' ');
+}
 
 /**
  * POST /api/v1/payment/create-payment
@@ -61,17 +69,24 @@ const createPayment = async (req, res) => {
         quantity: booking.quantity || 1,
         product_id: booking.product_id,
         booking_id,
+        start_time: toMySQLDatetime(booking.start_time),
+        end_time: toMySQLDatetime(booking.end_time),
+        date: booking.date,
       };
 
     } else {
       // Flow lama: frontend kirim semua field langsung
-      const { id, amount, name, email, product_name, quantity, product_id, date } = req.body;
+      const { id, amount, name, email, product_name, quantity, product_id, date, start_time, end_time } = req.body;
 
       if (!amount || !id || !name || !email) {
         return misc.response(res, 400, true, 'Missing required fields: id, amount, name, email');
       }
 
-      order = { id, amount, name, email, product_name, quantity, product_id, date };
+      order = {
+        id, amount, name, email, product_name, quantity, product_id, date,
+        start_time: toMySQLDatetime(start_time),
+        end_time: toMySQLDatetime(end_time),
+      };
     }
 
     // Validasi amount
@@ -81,27 +96,45 @@ const createPayment = async (req, res) => {
 
     // --- FIRST TO PAY WINS INVENTORY LOCKING (C.6) ---
     if (order.product_id) {
-      const orderDate = order.date || new Date().toISOString().split('T')[0];
-      const dailyCapacity = 1; // Permintaan User: Anggap semua mobil stoknya hanya 1
+      let bookingSumResult;
 
       // 2. Hitung jumlah booking yang SUDAH DIBAYAR lunas pada tanggal tersebut
       // PENDING booking TIDAK DIHITUNG (sehingga puluhan user bisa rebutan checkout bersamaan)
-      const bookingSumResult = await execute(
-        `SELECT SUM(quantity) as total_booked 
-         FROM bookings 
-         WHERE product_id = ? 
-           AND date = ? 
-           AND status != 'CANCELLED' 
-           AND payment_status IN ('PAID', 'SETTLED', 'SUCCESS')`,
-        [order.product_id, orderDate]
-      );
-      
+      if (order.start_time && order.end_time) {
+        bookingSumResult = await query(
+          `SELECT SUM(quantity) as total_booked 
+           FROM bookings 
+           WHERE product_id = ? 
+             AND start_time < ? 
+             AND end_time > ? 
+             AND status != 'CANCELLED' 
+             AND payment_status IN ('PAID', 'SETTLED', 'SUCCESS')`,
+          [order.product_id, order.end_time, order.start_time]
+        );
+      } else {
+        const orderDate = order.date || new Date().toISOString().split('T')[0];
+        bookingSumResult = await query(
+          `SELECT SUM(quantity) as total_booked 
+           FROM bookings 
+           WHERE product_id = ? 
+             AND date = ? 
+             AND status != 'CANCELLED' 
+             AND payment_status IN ('PAID', 'SETTLED', 'SUCCESS')`,
+          [order.product_id, orderDate]
+        );
+      }
+
       const sumRows = Array.isArray(bookingSumResult[0]) ? bookingSumResult[0] : bookingSumResult;
       const totalBooked = sumRows && sumRows[0].total_booked ? Number(sumRows[0].total_booked) : 0;
 
-      // 3. Validasi: Tolak JIKA DAN HANYA JIKA unit sudah DIBAYAR oleh pemenang (totalBooked >= 1)
-      if (totalBooked >= 1) {
-        return misc.response(res, 400, true, `Maaf, unit tersebut baru saja disewa dan dibayar sukses oleh pelanggan lain.`);
+      // Ambil limit stok / kapasitas aktual dari tabel products
+      const prodResult = await execute('SELECT daily_capacity FROM products WHERE id = ? LIMIT 1', [order.product_id]);
+      const prodRows = Array.isArray(prodResult[0]) ? prodResult[0] : prodResult;
+      const actualCapacity = prodRows && prodRows.length > 0 && prodRows[0].daily_capacity != null ? Number(prodRows[0].daily_capacity) : 1;
+
+      // 3. Validasi: Tolak JIKA stok sudah DIBAYAR oleh pemenang (totalBooked >= actualCapacity)
+      if (totalBooked >= actualCapacity) {
+        return misc.response(res, 400, true, `Maaf, kapasitas/stok unit ini baru saja penuh (disewa & dibayar sukses oleh pelanggan lain).`);
       }
     }
     // ------------------------------------------
@@ -120,12 +153,14 @@ const createPayment = async (req, res) => {
     // Upsert bookings — simpan juga payment_request_id agar bisa dipakai untuk cancel
     await execute(
       `INSERT INTO bookings 
-        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, status, payment_url, payment_gateway, payment_status, payment_request_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 'doku', 'PENDING', ?, NOW())
+        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, start_time, end_time, status, payment_url, payment_gateway, payment_status, payment_request_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, 'doku', 'PENDING', ?, NOW())
        ON DUPLICATE KEY UPDATE
         payment_url        = VALUES(payment_url),
         payment_request_id = VALUES(payment_request_id),
         date               = VALUES(date),
+        start_time         = VALUES(start_time),
+        end_time           = VALUES(end_time),
         updated_at         = NOW()`,
       [
         order.id,
@@ -135,9 +170,11 @@ const createPayment = async (req, res) => {
         order.product_name || '-',
         order.quantity || 1,
         order.amount,
-        finalDate, 
+        finalDate,
+        order.start_time || null,
+        order.end_time || null,
         transaction.payment_url || null,
-        transaction.request_id  || null,
+        transaction.request_id || null,
       ]
     );
 
@@ -204,7 +241,7 @@ const handleNotification = async (req, res) => {
 
     // ── PENGAMAN: Cek apakah booking sudah CANCELLED ──────────────────────
     const existingBooking = await execute(
-      `SELECT id, product_id, date, status, payment_status, user_name, total_price, external_id 
+      `SELECT id, product_id, date, start_time, end_time, status, payment_status, user_name, total_price, external_id 
        FROM bookings WHERE external_id = ? LIMIT 1`,
       [result.invoice_number]
     );
@@ -243,9 +280,9 @@ const handleNotification = async (req, res) => {
       );
 
       // TIDAK mengubah status booking — tetap CANCELLED
-      return res.json({ 
-        success: true, 
-        message: 'Payment received but booking was cancelled. Refund needed.' 
+      return res.json({
+        success: true,
+        message: 'Payment received but booking was cancelled. Refund needed.'
       });
     }
     // ── END PENGAMAN ──────────────────────────────────────────────────────
@@ -280,31 +317,75 @@ const handleNotification = async (req, res) => {
 
     // Kirim Notifikasi Email Jika Pembayaran Berhasil
     if (newStatus === 'PAID') {
-      
+
       // --- FIRST TO PAY WINS: THE KICK (C.6) ---
       try {
-        if (currentBooking && currentBooking.product_id && currentBooking.date) {
-          const competitorsResult = await execute(
-            `SELECT id, external_id, payment_request_id 
-             FROM bookings 
-             WHERE product_id = ? 
-               AND date = ? 
-               AND status = 'PENDING' 
-               AND id != ?`,
-            [currentBooking.product_id, currentBooking.date, currentBooking.id]
-          );
-          const competitors = Array.isArray(competitorsResult[0]) ? competitorsResult[0] : competitorsResult;
-          
-          if (competitors && competitors.length > 0) {
-            console.log(`[RACE CONDITION] Menendang ${competitors.length} pesaing (kalah cepat) untuk mobil ${currentBooking.product_id} tanggal ${currentBooking.date}`);
-            for (const comp of competitors) {
-              // 1. Tembak API Pembatalan ke DOKU Jokul
-              await payment_service.cancelTransaction(comp.external_id, comp.payment_request_id);
-              // 2. Kick dari DB Trivgoo
-              await execute(
-                `UPDATE bookings SET status = 'CANCELLED', payment_status = 'FAILED_OVERBOOKED', updated_at = NOW() WHERE id = ?`,
-                [comp.id]
+        if (currentBooking && currentBooking.product_id) {
+          // Ambil limit stok / kapasitas aktual
+          const prodResult = await execute('SELECT daily_capacity FROM products WHERE id = ? LIMIT 1', [currentBooking.product_id]);
+          const prodRows = Array.isArray(prodResult[0]) ? prodResult[0] : prodResult;
+          const actualCapacity = prodRows && prodRows.length > 0 && prodRows[0].daily_capacity != null ? Number(prodRows[0].daily_capacity) : 1;
+
+          // Cek total ter-booking saat ini (SETELAH booking ini masuk jadi PAID)
+          let bookingSumResult;
+          if (currentBooking.start_time && currentBooking.end_time) {
+            bookingSumResult = await query(
+              `SELECT SUM(quantity) as total_booked FROM bookings 
+               WHERE product_id = ? AND start_time < ? AND end_time > ? AND status != 'CANCELLED' 
+               AND payment_status IN ('PAID', 'SETTLED', 'SUCCESS')`,
+              [currentBooking.product_id, currentBooking.end_time, currentBooking.start_time]
+            );
+          } else {
+            bookingSumResult = await query(
+              `SELECT SUM(quantity) as total_booked FROM bookings 
+               WHERE product_id = ? AND date = ? AND status != 'CANCELLED' 
+               AND payment_status IN ('PAID', 'SETTLED', 'SUCCESS')`,
+              [currentBooking.product_id, currentBooking.date]
+            );
+          }
+          const sumRows = Array.isArray(bookingSumResult[0]) ? bookingSumResult[0] : bookingSumResult;
+          const totalBooked = sumRows && sumRows[0].total_booked ? Number(sumRows[0].total_booked) : 0;
+
+          // HANYA jika kuota sudah terpenuhi, kita tendang sisa pesanan PENDING yang overlap
+          if (totalBooked >= actualCapacity) {
+            let competitorsResult;
+
+            if (currentBooking.start_time && currentBooking.end_time) {
+              competitorsResult = await query(
+                `SELECT id, external_id, payment_request_id 
+                 FROM bookings 
+                 WHERE product_id = ? 
+                   AND start_time < ? 
+                   AND end_time > ? 
+                   AND status = 'PENDING' 
+                   AND id != ?`,
+                [currentBooking.product_id, currentBooking.end_time, currentBooking.start_time, currentBooking.id]
               );
+            } else if (currentBooking.date) {
+              competitorsResult = await query(
+                `SELECT id, external_id, payment_request_id 
+                 FROM bookings 
+                 WHERE product_id = ? 
+                   AND date = ? 
+                   AND status = 'PENDING' 
+                   AND id != ?`,
+                [currentBooking.product_id, currentBooking.date, currentBooking.id]
+              );
+            }
+
+            const competitors = competitorsResult ? (Array.isArray(competitorsResult[0]) ? competitorsResult[0] : competitorsResult) : [];
+
+            if (competitors && competitors.length > 0) {
+              console.log(`[RACE CONDITION] Kapasitas penuh! Menendang ${competitors.length} pesaing untuk mobil ${currentBooking.product_id}`);
+              for (const comp of competitors) {
+                // 1. Tembak API Pembatalan ke DOKU Jokul
+                await payment_service.cancelTransaction(comp.external_id, comp.payment_request_id);
+                // 2. Kick dari DB Trivgoo
+                await execute(
+                  `UPDATE bookings SET status = 'CANCELLED', payment_status = 'FAILED_OVERBOOKED', updated_at = NOW() WHERE id = ?`,
+                  [comp.id]
+                );
+              }
             }
           }
         }
@@ -322,12 +403,12 @@ const handleNotification = async (req, res) => {
           [result.invoice_number]
         );
         const bRows = Array.isArray(bookingData[0]) ? bookingData[0] : bookingData;
-        
+
         if (bRows && bRows.length > 0) {
           const booking = bRows[0];
           const toEmail = booking.user_email || notification?.customer?.email || notification?.payer_email;
           const recipientName = booking.user_name || notification?.customer?.name || 'Customer';
-          
+
           if (toEmail) {
             await send_payment_success_email(
               toEmail,
@@ -338,7 +419,7 @@ const handleNotification = async (req, res) => {
             );
             console.log(`[PAYMENT] Success notification email sent to ${toEmail}`);
           }
-          
+
           // Kirim PUSH Notification ke Customer
           if (booking.user_id) {
             await sendPushNotification(
@@ -381,7 +462,7 @@ const handleNotification = async (req, res) => {
             }
           );
           console.log(`[PAYMENT] Agent notification email sent to ${agent.agent_email}`);
-          
+
           // Kirim PUSH Notification ke Agent Workspace
           if (agent.agent_id) {
             await sendPushNotification(
@@ -408,7 +489,7 @@ const handleNotification = async (req, res) => {
         `UPDATE webhook_logs SET status = 'failed', error_message = ?, processed_at = NOW()
          WHERE external_id = ? AND gateway = 'doku' ORDER BY id DESC LIMIT 1`,
         [error.message, invoiceNumber]
-      ).catch(() => {});
+      ).catch(() => { });
     }
 
     return res.status(500).json({ success: false, message: error.message });

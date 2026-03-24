@@ -14,6 +14,8 @@ const getAllBookings = async (req, res) => {
                 quantity, 
                 total_price as totalPrice, 
                 date, 
+                start_time as startTime,
+                end_time as endTime,
                 status,
                 external_id as externalId,
                 payment_url as paymentUrl,
@@ -68,7 +70,7 @@ const getMyBookings = async (req, res) => {
     }
 
     const [rows] = await db.query(
-  `SELECT
+      `SELECT
     b.id,
     b.user_id as userId,
     b.product_id as productId,
@@ -77,6 +79,8 @@ const getMyBookings = async (req, res) => {
     b.quantity,
     b.total_price as totalPrice,
     b.date,
+    b.start_time as startTime,
+    b.end_time as endTime,
     b.status,
     b.external_id as externalId,
     b.payment_url as paymentUrl,
@@ -89,19 +93,19 @@ const getMyBookings = async (req, res) => {
   LEFT JOIN products p ON b.product_id = p.id
   WHERE b.user_id = ?
   ORDER BY b.created_at DESC`,
-  [userId]
-);
+      [userId]
+    );
 
-const formattedRows = rows.map(row => ({
-  ...row,
-  date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
-  totalPrice: parseFloat(row.totalPrice),
-  productImage: row.productImage || null,
-  // DOKU expired 24 jam dari created_at
-  paymentExpiredAt: row.createdAt
-    ? new Date(new Date(row.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString()
-    : null,
-}));
+    const formattedRows = rows.map(row => ({
+      ...row,
+      date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
+      totalPrice: parseFloat(row.totalPrice),
+      productImage: row.productImage || null,
+      // DOKU expired 24 jam dari created_at
+      paymentExpiredAt: row.createdAt
+        ? new Date(new Date(row.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString()
+        : null,
+    }));
 
     return response(res, 200, false, 'My bookings fetched successfully', formattedRows);
   } catch (error) {
@@ -144,24 +148,24 @@ const updateBookingStatus = async (req, res) => {
 const cancelMyBooking = async (req, res) => {
   const { id } = req.params;
   const userId = req.user?.id;
- 
+
   if (!userId) {
     return response(res, 401, true, 'Unauthorized', null);
   }
- 
+
   try {
     // Cek booking milik user ini
     const [rows] = await db.query(
       'SELECT id, status, payment_status, external_id, payment_request_id FROM bookings WHERE id = ? AND user_id = ?',
       [id, userId]
     );
- 
+
     if (rows.length === 0) {
       return response(res, 404, true, 'Booking tidak ditemukan', null);
     }
- 
+
     const booking = rows[0];
- 
+
     // Hanya bisa cancel jika masih PENDING
     // CONFIRMED sudah diproses agent → tidak bisa cancel sendiri
     if (booking.status !== 'PENDING') {
@@ -172,7 +176,7 @@ const cancelMyBooking = async (req, res) => {
         null
       );
     }
- 
+
     // Update status ke CANCELLED
     await db.query(
       `UPDATE bookings 
@@ -180,7 +184,7 @@ const cancelMyBooking = async (req, res) => {
        WHERE id = ? AND user_id = ?`,
       [id, userId]
     );
- 
+
     // Batalkan juga tagihan di Payment Gateway
     if (booking.external_id) {
       // Kirim payment_request_id (UUID transaksi asli) agar DOKU dapat memverifikasi pembatalan
@@ -188,7 +192,7 @@ const cancelMyBooking = async (req, res) => {
     }
 
     return response(res, 200, false, 'Booking berhasil dibatalkan', { id: Number(id), status: 'CANCELLED' });
- 
+
   } catch (error) {
     console.error('Error cancelling booking:', error);
     return response(res, 500, true, 'Gagal membatalkan booking', null);
