@@ -13,6 +13,53 @@ function toMySQLDatetime(val) {
   return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+// ── Commission helper ─────────────────────────────────────────────────────────
+/**
+ * Ambil commission_rate dari tabel settings (row id=1).
+ * Fallback ke 11% jika belum ada.
+ */
+async function get_commission_rate() {
+  try {
+    const rows = await execute(
+      `SELECT commission_rate FROM settings WHERE id = 1 LIMIT 1`
+    );
+    const data = Array.isArray(rows[0]) ? rows[0] : rows;
+    return data && data[0] && data[0].commission_rate != null
+      ? Number(data[0].commission_rate)
+      : 11;
+  } catch {
+    return 11;
+  }
+}
+
+/**
+ * Kalkulasi dan simpan komisi ke kolom bookings saat booking jadi PAID.
+ * commission_amount = total_price × rate / 100
+ * agent_earnings    = total_price − commission_amount
+ */
+async function apply_commission(booking_id, total_price) {
+  const rate             = await get_commission_rate();
+  const commission_amount = Math.round((Number(total_price) * rate) / 100);
+  const agent_earnings    = Math.round(Number(total_price) - commission_amount);
+
+  await execute(
+    `UPDATE bookings
+       SET commission_rate   = ?,
+           commission_amount = ?,
+           agent_earnings    = ?
+     WHERE id = ?`,
+    [rate, commission_amount, agent_earnings, booking_id]
+  );
+
+  console.log(
+    `[COMMISSION] Booking #${booking_id} | total: ${total_price} | ` +
+    `rate: ${rate}% | fee: ${commission_amount} | agent_net: ${agent_earnings}`
+  );
+
+  return { rate, commission_amount, agent_earnings };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * POST /api/v1/payment/create-payment
  * Terima booking_id dari frontend, lookup data dari DB, lalu buat transaksi.
@@ -38,7 +85,6 @@ const createPayment = async (req, res) => {
          LIMIT 1`,
         [booking_id]
       );
-      // execute() bisa return [rows] atau rows langsung tergantung implementasi
       const rows = Array.isArray(bookingResult[0]) ? bookingResult[0] : bookingResult;
 
       if (!rows || rows.length === 0) {
@@ -98,8 +144,6 @@ const createPayment = async (req, res) => {
     if (order.product_id) {
       let bookingSumResult;
 
-      // 2. Hitung jumlah booking yang SUDAH DIBAYAR lunas pada tanggal tersebut
-      // PENDING booking TIDAK DIHITUNG (sehingga puluhan user bisa rebutan checkout bersamaan)
       if (order.start_time && order.end_time) {
         bookingSumResult = await query(
           `SELECT SUM(quantity) as total_booked 
@@ -127,12 +171,10 @@ const createPayment = async (req, res) => {
       const sumRows = Array.isArray(bookingSumResult[0]) ? bookingSumResult[0] : bookingSumResult;
       const totalBooked = sumRows && sumRows[0].total_booked ? Number(sumRows[0].total_booked) : 0;
 
-      // Ambil limit stok / kapasitas aktual dari tabel products
       const prodResult = await execute('SELECT daily_capacity FROM products WHERE id = ? LIMIT 1', [order.product_id]);
       const prodRows = Array.isArray(prodResult[0]) ? prodResult[0] : prodResult;
       const actualCapacity = prodRows && prodRows.length > 0 && prodRows[0].daily_capacity != null ? Number(prodRows[0].daily_capacity) : 1;
 
-      // 3. Validasi: Tolak JIKA stok sudah DIBAYAR oleh pemenang (totalBooked >= actualCapacity)
       if (totalBooked >= actualCapacity) {
         return misc.response(res, 400, true, `Maaf, kapasitas/stok unit ini baru saja penuh (disewa & dibayar sukses oleh pelanggan lain).`);
       }
@@ -146,11 +188,9 @@ const createPayment = async (req, res) => {
       date: order.date
     });
 
-    // Buat transaksi ke payment gateway
     const transaction = await payment_service.createTransaction(order);
     const finalDate = order.date || new Date().toISOString().split('T')[0];
 
-    // Upsert bookings — simpan juga payment_request_id agar bisa dipakai untuk cancel
     await execute(
       `INSERT INTO bookings 
         (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, start_time, end_time, status, payment_url, payment_gateway, payment_status, payment_request_id, created_at)
@@ -178,7 +218,6 @@ const createPayment = async (req, res) => {
       ]
     );
 
-    // Simpan ke payment_transactions
     await execute(
       `INSERT INTO payment_transactions
         (booking_id, user_id, gateway, external_id, amount, currency, status, payment_url, gateway_response)
@@ -241,7 +280,8 @@ const handleNotification = async (req, res) => {
 
     // ── PENGAMAN: Cek apakah booking sudah CANCELLED ──────────────────────
     const existingBooking = await execute(
-      `SELECT id, product_id, date, start_time, end_time, status, payment_status, user_name, total_price, external_id 
+      `SELECT id, product_id, date, start_time, end_time, status, payment_status,
+              user_name, total_price, external_id 
        FROM bookings WHERE external_id = ? LIMIT 1`,
       [result.invoice_number]
     );
@@ -249,14 +289,12 @@ const handleNotification = async (req, res) => {
     const currentBooking = existingRows?.[0];
 
     if (currentBooking && currentBooking.status === 'CANCELLED' && newStatus === 'PAID') {
-      // ⚠️ User sudah cancel tapi tetap bayar → JANGAN ubah status, tandai perlu REFUND
       console.warn(
         `[PAYMENT] ⚠️ REFUND DIPERLUKAN! Booking ${result.invoice_number} sudah CANCELLED ` +
         `tapi user tetap membayar. Amount: ${currentBooking.total_price}. ` +
         `User: ${currentBooking.user_name}. Silakan proses refund manual via dashboard DOKU.`
       );
 
-      // Log ke webhook_logs dengan status khusus 'needs_refund'
       await execute(
         `UPDATE webhook_logs 
          SET status = 'needs_refund', signature_verified = true, processed_at = NOW(),
@@ -265,7 +303,6 @@ const handleNotification = async (req, res) => {
         [result.invoice_number]
       );
 
-      // Update payment_transactions agar tercatat pembayaran masuk
       await execute(
         `UPDATE payment_transactions
          SET status = 'NEEDS_REFUND', gateway_transaction_id = ?, payment_method = ?,
@@ -279,7 +316,6 @@ const handleNotification = async (req, res) => {
         ]
       );
 
-      // TIDAK mengubah status booking — tetap CANCELLED
       return res.json({
         success: true,
         message: 'Payment received but booking was cancelled. Refund needed.'
@@ -315,18 +351,27 @@ const handleNotification = async (req, res) => {
       [result.invoice_number]
     );
 
-    // Kirim Notifikasi Email Jika Pembayaran Berhasil
+    // ── Proses khusus saat PAID ───────────────────────────────────────────
     if (newStatus === 'PAID') {
 
-      // --- FIRST TO PAY WINS: THE KICK (C.6) ---
+      // ── 1. HITUNG & SIMPAN KOMISI ──────────────────────────────────────
+      if (currentBooking?.id && currentBooking?.total_price) {
+        try {
+          await apply_commission(currentBooking.id, currentBooking.total_price);
+        } catch (commErr) {
+          // Jangan sampai error komisi menggagalkan keseluruhan webhook
+          console.error('[COMMISSION] Gagal simpan komisi:', commErr.message);
+        }
+      }
+      // ──────────────────────────────────────────────────────────────────
+
+      // ── 2. FIRST TO PAY WINS: THE KICK (C.6) ──────────────────────────
       try {
         if (currentBooking && currentBooking.product_id) {
-          // Ambil limit stok / kapasitas aktual
           const prodResult = await execute('SELECT daily_capacity FROM products WHERE id = ? LIMIT 1', [currentBooking.product_id]);
           const prodRows = Array.isArray(prodResult[0]) ? prodResult[0] : prodResult;
           const actualCapacity = prodRows && prodRows.length > 0 && prodRows[0].daily_capacity != null ? Number(prodRows[0].daily_capacity) : 1;
 
-          // Cek total ter-booking saat ini (SETELAH booking ini masuk jadi PAID)
           let bookingSumResult;
           if (currentBooking.start_time && currentBooking.end_time) {
             bookingSumResult = await query(
@@ -346,7 +391,6 @@ const handleNotification = async (req, res) => {
           const sumRows = Array.isArray(bookingSumResult[0]) ? bookingSumResult[0] : bookingSumResult;
           const totalBooked = sumRows && sumRows[0].total_booked ? Number(sumRows[0].total_booked) : 0;
 
-          // HANYA jika kuota sudah terpenuhi, kita tendang sisa pesanan PENDING yang overlap
           if (totalBooked >= actualCapacity) {
             let competitorsResult;
 
@@ -376,11 +420,9 @@ const handleNotification = async (req, res) => {
             const competitors = competitorsResult ? (Array.isArray(competitorsResult[0]) ? competitorsResult[0] : competitorsResult) : [];
 
             if (competitors && competitors.length > 0) {
-              console.log(`[RACE CONDITION] Kapasitas penuh! Menendang ${competitors.length} pesaing untuk mobil ${currentBooking.product_id}`);
+              console.log(`[RACE CONDITION] Kapasitas penuh! Menendang ${competitors.length} pesaing untuk produk ${currentBooking.product_id}`);
               for (const comp of competitors) {
-                // 1. Tembak API Pembatalan ke DOKU Jokul
                 await payment_service.cancelTransaction(comp.external_id, comp.payment_request_id);
-                // 2. Kick dari DB Trivgoo
                 await execute(
                   `UPDATE bookings SET status = 'CANCELLED', payment_status = 'FAILED_OVERBOOKED', updated_at = NOW() WHERE id = ?`,
                   [comp.id]
@@ -392,11 +434,14 @@ const handleNotification = async (req, res) => {
       } catch (kickErr) {
         console.error('[RACE CONDITION] Gagal menendang competitor:', kickErr.message);
       }
-      // ----------------------------------------
+      // ──────────────────────────────────────────────────────────────────
 
+      // ── 3. EMAIL & PUSH NOTIF KE CUSTOMER ─────────────────────────────
       try {
         const bookingData = await execute(
-          `SELECT b.external_id, b.product_name, b.total_price, b.user_name, b.user_id, u.email as user_email, b.date
+          `SELECT b.external_id, b.product_name, b.total_price, b.commission_rate,
+                  b.commission_amount, b.agent_earnings,
+                  b.user_name, b.user_id, u.email as user_email, b.date
            FROM bookings b
            LEFT JOIN users u ON b.user_id = u.id
            WHERE b.external_id = ? LIMIT 1`,
@@ -420,7 +465,6 @@ const handleNotification = async (req, res) => {
             console.log(`[PAYMENT] Success notification email sent to ${toEmail}`);
           }
 
-          // Kirim PUSH Notification ke Customer
           if (booking.user_id) {
             await sendPushNotification(
               booking.user_id,
@@ -432,14 +476,16 @@ const handleNotification = async (req, res) => {
         }
       } catch (emailErr) {
         console.error('[EMAIL NOTIF] Failed to send payment success email:', emailErr.message);
-        // Error email tidak boleh menggagalkan proses webhook
       }
+      // ──────────────────────────────────────────────────────────────────
 
-      // ── Kirim notifikasi ke AGENT (owner produk) ───────────────────────
+      // ── 4. EMAIL & PUSH NOTIF KE AGENT ────────────────────────────────
       try {
         const agentData = await execute(
           `SELECT u.email AS agent_email, u.name AS agent_name, u.id AS agent_id,
-                  b.external_id, b.product_name, b.user_name, b.total_price, b.quantity, b.date
+                  b.external_id, b.product_name, b.user_name, b.total_price,
+                  b.commission_rate, b.commission_amount, b.agent_earnings,
+                  b.quantity, b.date
            FROM bookings b
            JOIN products p ON b.product_id = p.id
            JOIN users u ON p.owner_id = u.id
@@ -453,22 +499,29 @@ const handleNotification = async (req, res) => {
             agent.agent_email,
             agent.agent_name || 'Agent',
             {
-              external_id: agent.external_id,
-              product_name: agent.product_name,
-              user_name: agent.user_name,
-              total_price: agent.total_price,
-              quantity: agent.quantity,
-              date: agent.date,
+              external_id:      agent.external_id,
+              product_name:     agent.product_name,
+              user_name:        agent.user_name,
+              total_price:      agent.total_price,
+              commission_rate:  agent.commission_rate,
+              commission_amount: agent.commission_amount,
+              agent_earnings:   agent.agent_earnings,
+              quantity:         agent.quantity,
+              date:             agent.date,
             }
           );
           console.log(`[PAYMENT] Agent notification email sent to ${agent.agent_email}`);
 
-          // Kirim PUSH Notification ke Agent Workspace
           if (agent.agent_id) {
+            const netEarnings = agent.agent_earnings
+              ? `Rp ${Number(agent.agent_earnings).toLocaleString('id-ID')} (net setelah fee ${agent.commission_rate}%)`
+              : `Rp ${Number(agent.total_price).toLocaleString('id-ID')}`;
+
             await sendPushNotification(
               agent.agent_id,
               'Booking Baru Dibayar! 💰',
-              `${agent.user_name} berhasil membayar ${agent.quantity} pax tiket untuk ${agent.product_name}. Segera konfirmasi dari dashboard Agen!`,
+              `${agent.user_name} berhasil membayar ${agent.quantity} pax tiket untuk ${agent.product_name}. ` +
+              `Kamu mendapat ${netEarnings}. Segera konfirmasi dari dashboard!`,
               { type: 'incoming_paid_booking', bookingId: String(agent.external_id) }
             );
           }
@@ -476,6 +529,7 @@ const handleNotification = async (req, res) => {
       } catch (agentEmailErr) {
         console.error('[EMAIL NOTIF] Failed to send agent booking notification:', agentEmailErr.message);
       }
+      // ──────────────────────────────────────────────────────────────────
     }
 
     return res.json({ success: true, message: 'Notification processed' });

@@ -1,3 +1,4 @@
+// src/controllers/booking.js
 const db = require('../configs/db');
 const { response } = require('../helpers/response');
 const payment_service = require('../services/payment_service');
@@ -7,23 +8,26 @@ const getAllBookings = async (req, res) => {
     const { status, search } = req.query;
     let sql = `SELECT 
                 id, 
-                user_id as userId, 
-                product_id as productId, 
-                product_name as productName, 
-                user_name as userName, 
+                user_id          as userId, 
+                product_id       as productId, 
+                product_name     as productName, 
+                user_name        as userName, 
                 quantity, 
-                total_price as totalPrice, 
+                total_price      as totalPrice,
+                commission_rate  as commissionRate,
+                commission_amount as commissionAmount,
+                agent_earnings   as agentEarnings,
                 date, 
-                start_time as startTime,
-                end_time as endTime,
+                start_time       as startTime,
+                end_time         as endTime,
                 status,
-                external_id as externalId,
-                payment_url as paymentUrl,
-                payment_status as paymentStatus,
-                payment_gateway as paymentGateway,
-                payment_method as paymentMethod,
-                paid_at as paidAt,
-                created_at as createdAt
+                external_id      as externalId,
+                payment_url      as paymentUrl,
+                payment_status   as paymentStatus,
+                payment_gateway  as paymentGateway,
+                payment_method   as paymentMethod,
+                paid_at          as paidAt,
+                created_at       as createdAt
                FROM bookings WHERE 1=1`;
     const params = [];
 
@@ -42,13 +46,13 @@ const getAllBookings = async (req, res) => {
 
     const [rows] = await db.query(sql, params);
 
-    // Format data agar sesuai dengan frontend
     const formattedRows = rows.map(row => ({
       ...row,
-      // Pastikan date dalam format YYYY-MM-DD
-      date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
-      // Convert decimal ke float
-      totalPrice: parseFloat(row.totalPrice)
+      date:             row.date ? new Date(row.date).toISOString().split('T')[0] : null,
+      totalPrice:       parseFloat(row.totalPrice),
+      commissionRate:   row.commissionRate   != null ? parseFloat(row.commissionRate)   : null,
+      commissionAmount: row.commissionAmount != null ? parseFloat(row.commissionAmount) : null,
+      agentEarnings:    row.agentEarnings    != null ? parseFloat(row.agentEarnings)    : null,
     }));
 
     return response(res, 200, false, 'Bookings fetched successfully', formattedRows);
@@ -71,38 +75,37 @@ const getMyBookings = async (req, res) => {
 
     const [rows] = await db.query(
       `SELECT
-    b.id,
-    b.user_id as userId,
-    b.product_id as productId,
-    b.product_name as productName,
-    b.user_name as userName,
-    b.quantity,
-    b.total_price as totalPrice,
-    b.date,
-    b.start_time as startTime,
-    b.end_time as endTime,
-    b.status,
-    b.external_id as externalId,
-    b.payment_url as paymentUrl,
-    b.payment_status as paymentStatus,
-    b.created_at as createdAt,
-    b.original_date as originalDate,
-    b.reschedule_count as rescheduleCount,
-    p.image_url as productImage,
-    (SELECT id FROM reviews WHERE booking_id = b.id LIMIT 1) as reviewId
-  FROM bookings b
-  LEFT JOIN products p ON b.product_id = p.id
-  WHERE b.user_id = ?
-  ORDER BY b.created_at DESC`,
+         b.id,
+         b.user_id          as userId,
+         b.product_id       as productId,
+         b.product_name     as productName,
+         b.user_name        as userName,
+         b.quantity,
+         b.total_price      as totalPrice,
+         b.date,
+         b.start_time       as startTime,
+         b.end_time         as endTime,
+         b.status,
+         b.external_id      as externalId,
+         b.payment_url      as paymentUrl,
+         b.payment_status   as paymentStatus,
+         b.created_at       as createdAt,
+         b.original_date    as originalDate,
+         b.reschedule_count as rescheduleCount,
+         p.image_url        as productImage,
+         (SELECT id FROM reviews WHERE booking_id = b.id LIMIT 1) as reviewId
+       FROM bookings b
+       LEFT JOIN products p ON b.product_id = p.id
+       WHERE b.user_id = ?
+       ORDER BY b.created_at DESC`,
       [userId]
     );
 
     const formattedRows = rows.map(row => ({
       ...row,
       date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
-      totalPrice: parseFloat(row.totalPrice),
-      productImage: row.productImage || null,
-      // DOKU expired 24 jam dari created_at
+      totalPrice:    parseFloat(row.totalPrice),
+      productImage:  row.productImage || null,
       paymentExpiredAt: row.createdAt
         ? new Date(new Date(row.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString()
         : null,
@@ -119,21 +122,18 @@ const updateBookingStatus = async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
 
-  // Validasi status
   const validStatuses = ['PENDING', 'CONFIRMED', 'COMPLETED', 'CANCELLED'];
   if (!validStatuses.includes(status)) {
     return response(res, 400, true, 'Invalid status. Must be one of: PENDING, CONFIRMED, COMPLETED, CANCELLED', null);
   }
 
   try {
-    // Cek apakah booking exists
     const [rows] = await db.query('SELECT id FROM bookings WHERE id = ?', [id]);
 
     if (rows.length === 0) {
       return response(res, 404, true, 'Booking not found', null);
     }
 
-    // Update status
     await db.query(
       'UPDATE bookings SET status = ?, updated_at = NOW() WHERE id = ?',
       [status, id]
@@ -155,7 +155,6 @@ const cancelMyBooking = async (req, res) => {
   }
 
   try {
-    // Cek booking milik user ini
     const [rows] = await db.query(
       'SELECT id, status, payment_status, external_id, payment_request_id FROM bookings WHERE id = ? AND user_id = ?',
       [id, userId]
@@ -167,8 +166,6 @@ const cancelMyBooking = async (req, res) => {
 
     const booking = rows[0];
 
-    // Hanya bisa cancel jika masih PENDING
-    // CONFIRMED sudah diproses agent → tidak bisa cancel sendiri
     if (booking.status !== 'PENDING') {
       return response(res, 400, true,
         booking.status === 'CONFIRMED'
@@ -178,7 +175,6 @@ const cancelMyBooking = async (req, res) => {
       );
     }
 
-    // Update status ke CANCELLED
     await db.query(
       `UPDATE bookings 
        SET status = 'CANCELLED', payment_status = 'CANCELLED', updated_at = NOW() 
@@ -186,9 +182,7 @@ const cancelMyBooking = async (req, res) => {
       [id, userId]
     );
 
-    // Batalkan juga tagihan di Payment Gateway
     if (booking.external_id) {
-      // Kirim payment_request_id (UUID transaksi asli) agar DOKU dapat memverifikasi pembatalan
       await payment_service.cancelTransaction(booking.external_id, booking.payment_request_id || null);
     }
 
@@ -213,13 +207,11 @@ const rescheduleMyBooking = async (req, res) => {
     return response(res, 400, true, 'Tanggal baru wajib diisi', null);
   }
 
-  // Validasi format tanggal
   const parsedDate = new Date(new_date);
   if (isNaN(parsedDate.getTime())) {
     return response(res, 400, true, 'Format tanggal tidak valid', null);
   }
 
-  // Tanggal baru harus di masa depan
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   if (parsedDate < today) {
@@ -238,7 +230,6 @@ const rescheduleMyBooking = async (req, res) => {
 
     const booking = rows[0];
 
-    // Hanya booking yang sudah lunas (PAID) dan aktif yang bisa di-reschedule
     if (booking.payment_status !== 'PAID' || booking.status === 'CANCELLED' || booking.status === 'COMPLETED') {
       return response(res, 400, true,
         `Booking tidak dapat di-reschedule. Pastikan pembayaran sudah lunas dan status belum dibatalkan/selesai.`,
@@ -246,7 +237,6 @@ const rescheduleMyBooking = async (req, res) => {
       );
     }
 
-    // Maksimal 1x reschedule
     if (booking.reschedule_count >= 1) {
       return response(res, 400, true,
         'Booking ini sudah pernah di-reschedule. Maksimal 1 kali reschedule per booking.',
@@ -254,7 +244,6 @@ const rescheduleMyBooking = async (req, res) => {
       );
     }
 
-    // Simpan original_date hanya jika pertama kali reschedule
     const originalDate = booking.original_date || booking.date;
 
     await db.query(

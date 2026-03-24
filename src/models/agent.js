@@ -294,37 +294,158 @@ async function list_agent_users_with_verification() {
   }));
 }
 
+// ── Dashboard Stats ───────────────────────────────────────────────────────────
+
 async function get_agent_dashboard_stats(user_id) {
-  const sql = `
-    SELECT
-      COUNT(DISTINCT b.id)                                      AS total_bookings,
-      COALESCE(SUM(b.total_price), 0)                          AS total_revenue,
-      COUNT(DISTINCT CASE WHEN b.status = 'PENDING' THEN b.id END)   AS pending_bookings,
-      COUNT(DISTINCT CASE WHEN b.status = 'CONFIRMED' THEN b.id END) AS confirmed_bookings,
-      COUNT(DISTINCT CASE WHEN b.status = 'CANCELLED' THEN b.id END) AS cancelled_bookings
-    FROM bookings b
-    JOIN products p ON b.product_id = p.id
-    WHERE p.owner_id = ?
-  `;
-  const [rows] = await db.query(sql, [user_id]);
-  return rows[0] || {};
+  // Ambil commission_rate aktif dari settings
+  let commission_rate = 11;
+  try {
+    const [sRows] = await db.query(
+      `SELECT commission_rate FROM settings WHERE id = 1 LIMIT 1`
+    );
+    if (sRows[0]?.commission_rate != null) {
+      commission_rate = Number(sRows[0].commission_rate);
+    }
+  } catch { /* fallback ke 11% */ }
+
+  const [rows] = await db.query(
+    `SELECT
+       COUNT(DISTINCT b.id)                                           AS total_bookings,
+
+       -- Gross revenue (total sebelum dipotong komisi)
+       COALESCE(SUM(
+         CASE WHEN b.payment_status = 'PAID' THEN b.total_price ELSE 0 END
+       ), 0)                                                          AS gross_revenue,
+
+       -- Net earnings agent:
+       -- Pakai agent_earnings jika sudah dihitung saat webhook,
+       -- fallback kalkulasi manual untuk booking lama (agent_earnings IS NULL)
+       COALESCE(SUM(
+         CASE WHEN b.payment_status = 'PAID'
+           THEN COALESCE(
+             b.agent_earnings,
+             b.total_price * (1 - ? / 100)
+           )
+           ELSE 0
+         END
+       ), 0)                                                          AS total_commission,
+
+       -- Komisi yang sudah dipotong platform
+       COALESCE(SUM(
+         CASE WHEN b.payment_status = 'PAID'
+           THEN COALESCE(
+             b.commission_amount,
+             b.total_price * ? / 100
+           )
+           ELSE 0
+         END
+       ), 0)                                                          AS total_platform_fee,
+
+       -- Bookings bulan ini (sudah PAID)
+       COUNT(DISTINCT CASE
+         WHEN b.payment_status = 'PAID'
+           AND MONTH(b.paid_at) = MONTH(NOW())
+           AND YEAR(b.paid_at)  = YEAR(NOW())
+         THEN b.id
+       END)                                                           AS bookings_this_month,
+
+       -- Net earnings bulan ini
+       COALESCE(SUM(
+         CASE
+           WHEN b.payment_status = 'PAID'
+             AND MONTH(b.paid_at) = MONTH(NOW())
+             AND YEAR(b.paid_at)  = YEAR(NOW())
+           THEN COALESCE(
+             b.agent_earnings,
+             b.total_price * (1 - ? / 100)
+           )
+           ELSE 0
+         END
+       ), 0)                                                          AS earnings_this_month,
+
+       COUNT(DISTINCT CASE WHEN b.status = 'PENDING'   THEN b.id END) AS pending_bookings,
+       COUNT(DISTINCT CASE WHEN b.status = 'CONFIRMED' THEN b.id END) AS confirmed_bookings,
+       COUNT(DISTINCT CASE WHEN b.status = 'CANCELLED' THEN b.id END) AS cancelled_bookings,
+
+       -- Active customers (user unik yg pernah PAID)
+       COUNT(DISTINCT CASE
+         WHEN b.payment_status = 'PAID' THEN b.user_id
+       END)                                                           AS active_customers
+     FROM bookings b
+     JOIN products p ON b.product_id = p.id
+     WHERE p.owner_id = ?`,
+    [commission_rate, commission_rate, commission_rate, user_id]
+  );
+
+  // Total produk aktif milik agent
+  const [prodRows] = await db.query(
+    `SELECT COUNT(*) AS total_products FROM products WHERE owner_id = ? AND is_active = 1`,
+    [user_id]
+  );
+
+  const stats = rows[0] || {};
+
+  return {
+    // Stat cards utama di AgentDashboard
+    total_commission:    parseFloat(stats.total_commission   || 0),  // net earnings agent
+    bookings_this_month: Number(stats.bookings_this_month    || 0),
+    active_customers:    Number(stats.active_customers       || 0),
+    total_products:      Number(prodRows[0]?.total_products  || 0),
+
+    // Data tambahan untuk detail breakdown
+    gross_revenue:       parseFloat(stats.gross_revenue      || 0),
+    total_platform_fee:  parseFloat(stats.total_platform_fee || 0),
+    earnings_this_month: parseFloat(stats.earnings_this_month|| 0),
+    total_bookings:      Number(stats.total_bookings         || 0),
+    pending_bookings:    Number(stats.pending_bookings       || 0),
+    confirmed_bookings:  Number(stats.confirmed_bookings     || 0),
+    cancelled_bookings:  Number(stats.cancelled_bookings     || 0),
+    commission_rate,     // kirim ke frontend agar bisa ditampilkan
+  };
 }
 
+// ── Weekly Sales ──────────────────────────────────────────────────────────────
+
 async function get_agent_weekly_sales(user_id) {
-  const sql = `
-    SELECT
-      DAYNAME(b.created_at)             AS day,
-      COALESCE(SUM(b.total_price), 0)  AS total_sales,
-      COUNT(b.id)                       AS total_orders
-    FROM bookings b
-    JOIN products p ON b.product_id = p.id
-    WHERE p.owner_id = ?
-      AND b.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-    GROUP BY DAYOFWEEK(b.created_at), DAYNAME(b.created_at)
-    ORDER BY DAYOFWEEK(b.created_at)
-  `;
-  const [rows] = await db.query(sql, [user_id]);
-  return rows;
+  // Ambil commission_rate aktif
+  let commission_rate = 11;
+  try {
+    const [sRows] = await db.query(
+      `SELECT commission_rate FROM settings WHERE id = 1 LIMIT 1`
+    );
+    if (sRows[0]?.commission_rate != null) {
+      commission_rate = Number(sRows[0].commission_rate);
+    }
+  } catch { /* fallback */ }
+
+  const [rows] = await db.query(
+    `SELECT
+       DAYNAME(b.created_at)  AS name,
+       -- Net sales agent (pakai agent_earnings jika ada, fallback manual)
+       COALESCE(SUM(
+         CASE WHEN b.payment_status = 'PAID'
+           THEN COALESCE(
+             b.agent_earnings,
+             b.total_price * (1 - ? / 100)
+           )
+           ELSE 0
+         END
+       ), 0)                  AS sales,
+       COUNT(b.id)            AS total_orders
+     FROM bookings b
+     JOIN products p ON b.product_id = p.id
+     WHERE p.owner_id = ?
+       AND b.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+     GROUP BY DAYOFWEEK(b.created_at), DAYNAME(b.created_at)
+     ORDER BY DAYOFWEEK(b.created_at)`,
+    [commission_rate, user_id]
+  );
+
+  return rows.map(r => ({
+    name:         r.name,
+    sales:        parseFloat(r.sales || 0),
+    total_orders: Number(r.total_orders || 0),
+  }));
 }
 
 // ── Agent Booking Management ──────────────────────────────────────────────────
@@ -368,58 +489,64 @@ async function get_agent_bookings(owner_id, { status, payment_status, search, pa
   // Fetch data
   const [rows] = await db.query(
     `SELECT
-      b.id,
-      b.user_id,
-      b.product_id,
-      b.product_name,
-      b.user_name,
-      b.quantity,
-      b.total_price,
-      b.date,
-      b.status,
-      b.external_id,
-      b.payment_url,
-      b.payment_status,
-      b.payment_gateway,
-      b.payment_method,
-      b.paid_at,
-      b.created_at,
-      b.updated_at,
-      b.payment_expires_at,
-      p.image_url AS product_image,
-      u.email AS customer_email,
-      COALESCE(u.phone_number, up.phone) AS customer_phone
-    FROM bookings b
-    JOIN products p ON b.product_id = p.id
-    LEFT JOIN users u ON b.user_id = u.id
-    LEFT JOIN user_profiles up ON up.user_id = b.user_id
-    ${where}
-    ORDER BY b.created_at DESC
-    LIMIT ? OFFSET ?`,
+       b.id,
+       b.user_id,
+       b.product_id,
+       b.product_name,
+       b.user_name,
+       b.quantity,
+       b.total_price,
+       b.commission_rate,
+       b.commission_amount,
+       b.agent_earnings,
+       b.date,
+       b.status,
+       b.external_id,
+       b.payment_url,
+       b.payment_status,
+       b.payment_gateway,
+       b.payment_method,
+       b.paid_at,
+       b.created_at,
+       b.updated_at,
+       b.payment_expires_at,
+       p.image_url AS product_image,
+       u.email AS customer_email,
+       COALESCE(u.phone_number, up.phone) AS customer_phone
+     FROM bookings b
+     JOIN products p ON b.product_id = p.id
+     LEFT JOIN users u ON b.user_id = u.id
+     LEFT JOIN user_profiles up ON up.user_id = b.user_id
+     ${where}
+     ORDER BY b.created_at DESC
+     LIMIT ? OFFSET ?`,
     [...params, lim, offset]
   );
 
   const data = rows.map(r => ({
-    id: r.id,
-    userId: r.user_id,
-    productId: r.product_id,
-    productName: r.product_name,
-    userName: r.user_name,
-    quantity: r.quantity,
-    totalPrice: parseFloat(r.total_price),
-    date: r.date ? new Date(r.date).toISOString().split('T')[0] : null,
-    status: r.status,
-    externalId: r.external_id,
-    paymentUrl: r.payment_url,
-    paymentStatus: r.payment_status,
-    paymentGateway: r.payment_gateway,
-    paymentMethod: r.payment_method,
-    paidAt: r.paid_at,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-    productImage: r.product_image || null,
-    customerEmail: r.customer_email || null,
-    customerPhone: r.customer_phone || null,
+    id:               r.id,
+    userId:           r.user_id,
+    productId:        r.product_id,
+    productName:      r.product_name,
+    userName:         r.user_name,
+    quantity:         r.quantity,
+    totalPrice:       parseFloat(r.total_price),
+    commissionRate:   r.commission_rate   != null ? parseFloat(r.commission_rate)   : null,
+    commissionAmount: r.commission_amount != null ? parseFloat(r.commission_amount) : null,
+    agentEarnings:    r.agent_earnings    != null ? parseFloat(r.agent_earnings)    : null,
+    date:             r.date ? new Date(r.date).toISOString().split('T')[0] : null,
+    status:           r.status,
+    externalId:       r.external_id,
+    paymentUrl:       r.payment_url,
+    paymentStatus:    r.payment_status,
+    paymentGateway:   r.payment_gateway,
+    paymentMethod:    r.payment_method,
+    paidAt:           r.paid_at,
+    createdAt:        r.created_at,
+    updatedAt:        r.updated_at,
+    productImage:     r.product_image || null,
+    customerEmail:    r.customer_email || null,
+    customerPhone:    r.customer_phone || null,
     paymentExpiredAt: r.payment_expires_at || null,
   }));
 
@@ -434,26 +561,26 @@ async function get_agent_booking_detail(booking_id, owner_id) {
 
   const [rows] = await db.query(
     `SELECT
-      b.*,
-      p.image_url AS product_image,
-      p.name AS p_name,
-      p.location AS product_location,
-      u.email AS customer_email,
-      u.name AS customer_name_from_users,
-      COALESCE(u.phone_number, up.phone) AS customer_phone,
-      up.address_line AS customer_address,
-      pt.status AS pt_status,
-      pt.payment_method AS pt_payment_method,
-      pt.payment_channel AS pt_payment_channel,
-      pt.paid_at AS pt_paid_at,
-      pt.gateway_transaction_id AS pt_gateway_txn_id
-    FROM bookings b
-    JOIN products p ON b.product_id = p.id
-    LEFT JOIN users u ON b.user_id = u.id
-    LEFT JOIN user_profiles up ON up.user_id = b.user_id
-    LEFT JOIN payment_transactions pt ON pt.booking_id = b.id
-    WHERE b.id = ? AND p.owner_id = ?
-    LIMIT 1`,
+       b.*,
+       p.image_url AS product_image,
+       p.name AS p_name,
+       p.location AS product_location,
+       u.email AS customer_email,
+       u.name AS customer_name_from_users,
+       COALESCE(u.phone_number, up.phone) AS customer_phone,
+       up.address_line AS customer_address,
+       pt.status AS pt_status,
+       pt.payment_method AS pt_payment_method,
+       pt.payment_channel AS pt_payment_channel,
+       pt.paid_at AS pt_paid_at,
+       pt.gateway_transaction_id AS pt_gateway_txn_id
+     FROM bookings b
+     JOIN products p ON b.product_id = p.id
+     LEFT JOIN users u ON b.user_id = u.id
+     LEFT JOIN user_profiles up ON up.user_id = b.user_id
+     LEFT JOIN payment_transactions pt ON pt.booking_id = b.id
+     WHERE b.id = ? AND p.owner_id = ?
+     LIMIT 1`,
     [bid, oid]
   );
 
@@ -461,31 +588,34 @@ async function get_agent_booking_detail(booking_id, owner_id) {
   const r = rows[0];
 
   return {
-    id: r.id,
-    userId: r.user_id,
-    productId: r.product_id,
-    productName: r.product_name,
-    productImage: r.product_image || null,
-    productLocation: r.product_location || null,
-    userName: r.user_name,
-    customerEmail: r.customer_email || null,
-    customerPhone: r.customer_phone || null,
-    customerAddress: r.customer_address || null,
-    quantity: r.quantity,
-    totalPrice: parseFloat(r.total_price),
-    date: r.date ? new Date(r.date).toISOString().split('T')[0] : null,
-    status: r.status,
-    externalId: r.external_id,
-    paymentUrl: r.payment_url,
-    paymentStatus: r.payment_status,
-    paymentGateway: r.payment_gateway,
-    paymentMethod: r.payment_method || r.pt_payment_method || null,
-    paymentChannel: r.pt_payment_channel || null,
-    paidAt: r.paid_at || r.pt_paid_at || null,
+    id:                   r.id,
+    userId:               r.user_id,
+    productId:            r.product_id,
+    productName:          r.product_name,
+    productImage:         r.product_image || null,
+    productLocation:      r.product_location || null,
+    userName:             r.user_name,
+    customerEmail:        r.customer_email || null,
+    customerPhone:        r.customer_phone || null,
+    customerAddress:      r.customer_address || null,
+    quantity:             r.quantity,
+    totalPrice:           parseFloat(r.total_price),
+    commissionRate:       r.commission_rate   != null ? parseFloat(r.commission_rate)   : null,
+    commissionAmount:     r.commission_amount != null ? parseFloat(r.commission_amount) : null,
+    agentEarnings:        r.agent_earnings    != null ? parseFloat(r.agent_earnings)    : null,
+    date:                 r.date ? new Date(r.date).toISOString().split('T')[0] : null,
+    status:               r.status,
+    externalId:           r.external_id,
+    paymentUrl:           r.payment_url,
+    paymentStatus:        r.payment_status,
+    paymentGateway:       r.payment_gateway,
+    paymentMethod:        r.payment_method || r.pt_payment_method || null,
+    paymentChannel:       r.pt_payment_channel || null,
+    paidAt:               r.paid_at || r.pt_paid_at || null,
     gatewayTransactionId: r.pt_gateway_txn_id || null,
-    createdAt: r.created_at,
-    updatedAt: r.updated_at,
-    paymentExpiredAt: r.payment_expires_at || null,
+    createdAt:            r.created_at,
+    updatedAt:            r.updated_at,
+    paymentExpiredAt:     r.payment_expires_at || null,
   };
 }
 
@@ -499,7 +629,6 @@ async function update_agent_booking_status(booking_id, owner_id, new_status) {
   const st = String(new_status || '').toUpperCase();
   if (!valid.has(st)) throw new Error('Invalid status. Must be CONFIRMED, COMPLETED, or CANCELLED');
 
-  // Verify ownership via products
   const [rows] = await db.query(
     `SELECT b.id, b.status
      FROM bookings b
@@ -512,7 +641,6 @@ async function update_agent_booking_status(booking_id, owner_id, new_status) {
   if (!rows[0]) throw new Error('Booking not found or not owned by this agent');
 
   const current = rows[0].status;
-  // Validate transitions
   if (st === 'CONFIRMED' && current !== 'PENDING') {
     throw new Error('Can only confirm PENDING bookings');
   }
@@ -545,7 +673,6 @@ async function get_agent_customers(owner_id, filters = {}) {
     params.push(s, s, s);
   }
 
-  // Count total unique customers
   const [countRows] = await db.query(
     `SELECT COUNT(DISTINCT b.user_id) AS total
      FROM bookings b
@@ -557,7 +684,6 @@ async function get_agent_customers(owner_id, filters = {}) {
   );
   const total = countRows[0]?.total || 0;
 
-  // Pagination
   const pg = Math.max(1, Number(page));
   const lim = Math.min(100, Math.max(1, Number(limit)));
   const offset = (pg - 1) * lim;
@@ -585,12 +711,11 @@ async function get_agent_customers(owner_id, filters = {}) {
   );
 
   const data = rows.map(r => {
-    // Determine Top Preference
     const products = r.product_history_raw ? r.product_history_raw.split('||') : [];
     const counts = {};
     let topProduct = '-';
     let maxCount = 0;
-    
+
     for (const p of products) {
       if (!p) continue;
       counts[p] = (counts[p] || 0) + 1;
@@ -600,19 +725,18 @@ async function get_agent_customers(owner_id, filters = {}) {
       }
     }
 
-    // Unique history
     const history = Array.from(new Set(products)).filter(Boolean);
 
     return {
-      userId: r.user_id,
-      userName: r.user_name || 'Guest User',
-      customerEmail: r.customer_email || '-',
-      customerPhone: r.customer_phone || '-',
-      totalBookings: r.total_bookings,
-      totalSpent: parseFloat(r.total_spent || 0),
+      userId:          r.user_id,
+      userName:        r.user_name || 'Guest User',
+      customerEmail:   r.customer_email || '-',
+      customerPhone:   r.customer_phone || '-',
+      totalBookings:   r.total_bookings,
+      totalSpent:      parseFloat(r.total_spent || 0),
       lastBookingDate: r.last_booking_date,
-      topPreference: topProduct,
-      bookingHistory: history
+      topPreference:   topProduct,
+      bookingHistory:  history,
     };
   });
 
@@ -679,7 +803,7 @@ async function update_agent_password(user_id, old_password, new_password) {
   if (!rows[0] || !rows[0].password_hash) throw new Error('User not found');
   const match = await bcrypt.compare(old_password, rows[0].password_hash);
   if (!match) throw new Error('Incorrect old password');
-  
+
   const hash = await bcrypt.hash(new_password, 10);
   await db.transaction(async (conn) => {
     await conn.query('UPDATE users SET password_hash = ? WHERE id = ?', [hash, uid]);

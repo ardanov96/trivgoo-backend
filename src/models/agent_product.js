@@ -1,5 +1,4 @@
-// src/models/agent_product.js  (atau src/models/product.js sesuai nama file kamu)
-// FILE LENGKAP — ganti seluruh isi file yang lama dengan ini
+// src/models/agent_product.js
 
 const conn = require('../configs/db');
 
@@ -13,36 +12,58 @@ async function query(sql, params = []) {
   }
 }
 
+/**
+ * normalize_image_path
+ * Selalu menyimpan path relatif ke DB: /car-rental/xpander.jpg
+ * Menghapus domain (http://localhost, https://trivgoo.com, dll) jika ada.
+ */
+function normalize_image_path(path) {
+  if (!path) return null;
+
+  // Jika sudah relative path, pastikan diawali tepat satu slash, tanpa double slash
+  if (!path.startsWith('http://') && !path.startsWith('https://')) {
+    return '/' + path.replace(/^\/+/, '');
+  }
+
+  // Jika absolute URL, ambil pathname-nya saja
+  try {
+    const url = new URL(path);
+    // url.pathname sudah diawali '/', normalize double slash kalau ada
+    return '/' + url.pathname.replace(/^\/+/, '');
+  } catch {
+    // Fallback manual: buang skema + domain
+    return '/' + path.replace(/^https?:\/\/[^/]+\/?/, '').replace(/^\/+/, '');
+  }
+}
+
+/**
+ * resolve_image_url
+ * Dipakai saat MEMBACA dari DB → menghasilkan URL absolut untuk response API.
+ * Jika path sudah absolute, kembalikan apa adanya.
+ * Jika relative, tempelkan BASE_URL dari env.
+ */
 function resolve_image_url(path) {
   if (!path) return null;
+
+  // Sudah absolute URL → kembalikan langsung
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
+
   const BASE_URL =
     process.env.BASE_URL ||
     process.env.API_URL_DEV ||
     'http://localhost:4000';
-  const cleanPath = path.startsWith('/') ? path : `/${path}`;
-  return `${BASE_URL}${cleanPath}`;
+
+  // Pastikan tidak ada double slash antara BASE_URL dan path
+  const cleanBase = BASE_URL.replace(/\/+$/, '');   // hapus trailing slash dari base
+  const cleanPath = '/' + path.replace(/^\/+/, ''); // pastikan path diawali tepat satu slash
+
+  return `${cleanBase}${cleanPath}`;
 }
 
 function safe_parse_json(value, fallback) {
   if (!value) return fallback;
   try { return JSON.parse(value); }
   catch { return fallback; }
-}
-
-function normalize_image_path(path) {
-  if (!path) return null;
-  if (!path.startsWith('http://') && !path.startsWith('https://')) return path;
-  const BASE_URL =
-    process.env.BASE_URL ||
-    process.env.API_URL_DEV ||
-    'http://localhost:4000';
-  try {
-    const url = new URL(path);
-    return url.pathname.replace(/^\//, '');
-  } catch {
-    return path;
-  }
 }
 
 // ── Finders ───────────────────────────────────────────────────────────────────
@@ -78,7 +99,7 @@ async function find_product_blocked_dates(product_id) {
   return rows.map((r) => r.blocked_date);
 }
 
-// ── NEW: Voucher helpers ──────────────────────────────────────────────────────
+// ── Voucher helpers ───────────────────────────────────────────────────────────
 
 /**
  * Ambil semua voucher yang dilampirkan ke sebuah product.
@@ -102,7 +123,7 @@ async function build_product_response(row) {
 
   const images_raw    = await find_product_images(row.id);
   const blocked_dates = await find_product_blocked_dates(row.id);
-  const vouchers      = await find_product_vouchers(row.id);   // ← NEW
+  const vouchers      = await find_product_vouchers(row.id);
   const features      = safe_parse_json(row.features, []);
   const details       = safe_parse_json(row.details, null);
   const specialization = row.owner_specialization ?? null;
@@ -128,10 +149,10 @@ async function build_product_response(row) {
     details,
     daily_capacity: row.daily_capacity,
     blocked_dates,
-    vouchers,           // ← NEW: array voucher objects
-    rating:    row.rating ? Number(row.rating) : 0,
-    is_active: !!row.is_active,
-    created_at: row.created_at,
+    vouchers,
+    rating:         row.rating ? Number(row.rating) : 0,
+    is_active:      !!row.is_active,
+    created_at:     row.created_at,
   };
 }
 
@@ -288,7 +309,7 @@ async function list_products_by_owner(owner_id) {
   });
 }
 
-// ── NEW: Voucher CRUD ─────────────────────────────────────────────────────────
+// ── Voucher CRUD ──────────────────────────────────────────────────────────────
 
 /**
  * Ambil semua voucher yang terlampir ke sebuah product.
@@ -306,7 +327,6 @@ async function get_product_vouchers(product_id) {
  * @param {number[]} voucher_ids
  */
 async function set_product_vouchers(product_id, owner_id, voucher_ids) {
-  // Pastikan product milik owner
   const existing = await find_product_row_by_id(product_id);
   if (!existing) return null;
 
@@ -316,10 +336,8 @@ async function set_product_vouchers(product_id, owner_id, voucher_ids) {
     throw err;
   }
 
-  // Hapus semua relasi lama
   await query(`DELETE FROM product_vouchers WHERE product_id = ?`, [product_id]);
 
-  // Insert relasi baru
   if (Array.isArray(voucher_ids) && voucher_ids.length > 0) {
     for (const vid of voucher_ids) {
       const numVid = Number(vid);
@@ -331,7 +349,6 @@ async function set_product_vouchers(product_id, owner_id, voucher_ids) {
     }
   }
 
-  // Kembalikan daftar voucher terbaru
   return get_product_vouchers(product_id);
 }
 
@@ -342,6 +359,6 @@ module.exports = {
   update_product,
   get_product_by_id_for_owner,
   list_products_by_owner,
-  get_product_vouchers,     // ← NEW
-  set_product_vouchers,     // ← NEW
+  get_product_vouchers,
+  set_product_vouchers,
 };
