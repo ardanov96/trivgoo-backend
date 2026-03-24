@@ -51,4 +51,12 @@ Route.put('/profile', requireAuth, upload.single('avatar'), agent.update_profile
 Route.put('/password', requireAuth, agent.update_password);
 Route.post('/bank/request-change', requireAuth, agent.request_bank_change);
 
+const reviewController = require('../controllers/review');
+
+// RATING & REVIEW ROUTES
+Route.get('/rating/summary', requireAuth, reviewController.get_agent_rating_summary);
+Route.get('/rating/reviews', requireAuth, reviewController.get_agent_reviews);
+Route.post('/rating/reviews/:id/reply', requireAuth, reviewController.reply_to_review);
+Route.post('/rating/reviews/:id/flag', requireAuth, reviewController.flag_review);
+
 module.exports = Route;
