@@ -51,7 +51,7 @@ const sitemapController = async (req, res) => {
           if(!product.id || !product.name) return;
             
           const hash = encodeId(product.id);
-          const slug = generateSlug(product.name);
+          const slug = product.seo_slug || generateSlug(product.name);
           
           xml += `  <url>\n`;
           xml += `    <loc>${baseUrl}/product/${hash}/${slug}</loc>\n`;

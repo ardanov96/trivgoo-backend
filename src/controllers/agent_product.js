@@ -123,6 +123,7 @@ async function create_my_product(req, res) {
     const {
       category_id, name, description, price, currency, location,
       image_url, images, features, details, daily_capacity, blocked_dates, lat, lng,
+      seo_title, seo_description, seo_slug, seo_keyword, seo_canonical, seo_og_image,
     } = req.body;
 
     if (!category_id || !name || !description || price == null || !currency || !location) {
@@ -145,6 +146,12 @@ async function create_my_product(req, res) {
       blocked_dates,
       lat,
       lng,
+      seo_title, 
+      seo_description, 
+      seo_slug, 
+      seo_keyword, 
+      seo_canonical, 
+      seo_og_image,
     };
 
     const product = await create_product(payload);
@@ -177,6 +184,12 @@ async function update_my_product(req, res) {
       blocked_dates:  req.body?.blocked_dates,
       lat:            req.body?.lat,
       lng:            req.body?.lng,
+      seo_title:      req.body?.seo_title,
+      seo_description:req.body?.seo_description,
+      seo_slug:       req.body?.seo_slug,
+      seo_keyword:    req.body?.seo_keyword,
+      seo_canonical:  req.body?.seo_canonical,
+      seo_og_image:   req.body?.seo_og_image,
     };
 
     const product = await update_product(product_id, user.id, payload);
