@@ -5,12 +5,25 @@ const { execute, query } = require('../configs/db');
 const { send_payment_success_email, send_new_booking_notification_email } = require('../helpers/mailer');
 const { sendPushNotification } = require('../helpers/fcm');
 
-// Konversi ISO 8601 (2026-03-24T01:00:00.000Z) -> MySQL DATETIME (2026-03-24 01:00:00)
+// Konversi aman tanpa timezone shift: "2026-03-24 09:00:00" -> "2026-03-24 09:00:00"
 function toMySQLDatetime(val) {
   if (!val) return null;
+  
+  if (typeof val === 'string') {
+    // Ambil literal date & time (abaikan Z atau offset agar jam tidak berubah 8 jam)
+    const match = val.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/);
+    if (match) {
+      const datePart = match[1];
+      const timePart = match[2];
+      const secondsPart = match[3] || ':00';
+      return `${datePart} ${timePart}${secondsPart}`;
+    }
+  }
+
   const d = new Date(val);
   if (isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 19).replace('T', ' ');
+  const pad = (n) => n.toString().padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 /**

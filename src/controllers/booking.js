@@ -33,28 +33,88 @@ const getAllBookings = async (req, res) => {
     }
 
     if (search) {
-      sql += ` AND (id LIKE ? OR user_name LIKE ? OR product_name LIKE ?)`;
+      sql += ` AND (
+        CAST(id AS CHAR) LIKE ? 
+        OR user_name LIKE ? 
+        OR product_name LIKE ?
+      )`;
       const s = `%${search}%`;
       params.push(s, s, s);
     }
 
     sql += ` ORDER BY created_at DESC`;
 
-    const [rows] = await db.query(sql, params);
+    // 1. Safe Query Execution
+    let rows = [];
+    try {
+      [rows] = await db.query(sql, params);
+    } catch (dbError) {
+      console.error('[getAllBookings] Database Query Error:', dbError.message);
+      console.error('[getAllBookings] SQL:', sql);
+      console.error('[getAllBookings] Params:', params);
+      throw dbError; // rethrow to be caught by main catch block
+    }
 
-    // Format data agar sesuai dengan frontend
-    const formattedRows = rows.map(row => ({
-      ...row,
-      // Pastikan date dalam format YYYY-MM-DD
-      date: row.date ? new Date(row.date).toISOString().split('T')[0] : null,
-      // Convert decimal ke float
-      totalPrice: parseFloat(row.totalPrice)
-    }));
+    if (!Array.isArray(rows)) {
+      console.warn('[getAllBookings] DB did not return an array. Returning empty.');
+      return response(res, 200, false, 'Bookings fetched successfully', []);
+    }
+
+    // 2. Safe Mapping & Transformation
+    const formattedRows = rows.map((row, index) => {
+      try {
+        let formattedDate = null;
+
+        // Handle potentially invalid or "0000-00-00" dates safely
+        if (row.date) {
+          const parsedDate = new Date(row.date);
+          // Check if date is valid before calling toISOString
+          if (!isNaN(parsedDate.getTime())) {
+            formattedDate = parsedDate.toISOString().split('T')[0];
+          } else {
+            console.warn(`[getAllBookings] Invalid date detected for booking ID ${row.id}: ${row.date}`);
+            // Fallback: keeping original string or set to null
+            formattedDate = String(row.date).split('T')[0];
+          }
+        }
+
+        // Safe decimal parsing
+        const parsedPrice = row.totalPrice != null ? parseFloat(row.totalPrice) : 0;
+
+        return {
+          ...row,
+          // Fallbacks for critical fields to prevent frontend crashes
+          userId: row.userId || null,
+          productId: row.productId || null,
+          productName: row.productName || 'Unknown Product',
+          userName: row.userName || 'Unknown User',
+          date: formattedDate,
+          totalPrice: isNaN(parsedPrice) ? 0 : parsedPrice,
+        };
+      } catch (mappingError) {
+        // 3. Catch mapping errors per row so one bad row doesn't break the whole API
+        console.error(`[getAllBookings] Mapping error on row index ${index} (Booking ID ${row?.id}):`, mappingError.message);
+        console.error(`[getAllBookings] Problematic Row Data:`, JSON.stringify(row));
+
+        // Return a safe fallback object for this specific row
+        return {
+          id: row?.id || `error-${index}`,
+          productName: 'Data Error',
+          userName: 'Data Error',
+          date: null,
+          totalPrice: 0,
+          status: 'ERROR',
+        };
+      }
+    });
 
     return response(res, 200, false, 'Bookings fetched successfully', formattedRows);
   } catch (error) {
-    console.error('Error fetching bookings:', error);
-    return response(res, 500, true, 'Failed to fetch bookings', null);
+    // 4. Detailed top-level error logging
+    console.error('[getAllBookings] Fatal Error:', error.message);
+    console.error('[getAllBookings] Stack Trace:', error.stack);
+
+    return response(res, 500, true, 'Failed to fetch bookings. Please try again later.', null);
   }
 };
 
