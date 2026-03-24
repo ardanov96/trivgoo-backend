@@ -52,7 +52,7 @@ async function find_product_row_by_id(product_id) {
     `SELECT
        p.id, p.owner_id, p.category_id, p.name, p.description, p.price,
        p.currency, p.location, p.lat, p.lng, p.image_url, p.daily_capacity,
-       p.features, p.details, p.rating, p.is_active, p.created_at,
+       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug, p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active, p.created_at,
        u.specialization AS owner_specialization,
        COALESCE((
          SELECT JSON_ARRAYAGG(
@@ -148,6 +148,12 @@ async function build_product_response(row) {
     images,
     features,
     details,
+    seo_title:      row.seo_title,
+    seo_description:row.seo_description,
+    seo_slug:       row.seo_slug,
+    seo_keyword:    row.seo_keyword,
+    seo_canonical:  row.seo_canonical,
+    seo_og_image:   row.seo_og_image,
     daily_capacity: row.daily_capacity,
     blocked_dates,
     vouchers,       // ← NEW
@@ -196,8 +202,10 @@ async function create_product(payload) {
   const result = await query(
     `INSERT INTO products (
        owner_id, category_id, name, description, price, currency,
-       location, image_url, features, details, daily_capacity, lat, lng
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+       location, image_url, features, details, 
+       seo_title, seo_description, seo_slug, seo_keyword, seo_canonical, seo_og_image,
+       daily_capacity, lat, lng
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       payload.owner_id,
       payload.category_id,
@@ -209,6 +217,12 @@ async function create_product(payload) {
       normalize_image_path(payload.image_url),
       payload.features ? JSON.stringify(payload.features) : null,
       payload.details  ? JSON.stringify(payload.details)  : null,
+      payload.seo_title || null,
+      payload.seo_description || null,
+      payload.seo_slug || null,
+      payload.seo_keyword || null,
+      payload.seo_canonical || null,
+      payload.seo_og_image || null,
       payload.daily_capacity,
       payload.lat,
       payload.lng,
@@ -263,6 +277,12 @@ async function update_product(product_id, owner_id, payload) {
   if (payload.daily_capacity !== undefined) set("daily_capacity", payload.daily_capacity);
   if (payload.features       !== undefined) set("features", payload.features ? JSON.stringify(payload.features) : null);
   if (payload.details        !== undefined) set("details",  payload.details  ? JSON.stringify(payload.details)  : null);
+  if (payload.seo_title      !== undefined) set("seo_title",       payload.seo_title || null);
+  if (payload.seo_description!== undefined) set("seo_description", payload.seo_description || null);
+  if (payload.seo_slug       !== undefined) set("seo_slug",        payload.seo_slug || null);
+  if (payload.seo_keyword    !== undefined) set("seo_keyword",     payload.seo_keyword || null);
+  if (payload.seo_canonical  !== undefined) set("seo_canonical",   payload.seo_canonical || null);
+  if (payload.seo_og_image   !== undefined) set("seo_og_image",    payload.seo_og_image || null);
   if (payload.lat            != undefined)  set("lat", payload.lat);
   if (payload.lng            != undefined)  set("lng", payload.lng);
 
@@ -327,7 +347,7 @@ async function list_products_by_owner(owner_id) {
     `SELECT
        p.id, p.owner_id, p.category_id, p.name, p.description, p.price,
        p.currency, p.location, p.lat, p.lng, p.image_url, p.daily_capacity,
-       p.features, p.details, p.rating, p.is_active, p.created_at, p.updated_at,
+       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug, p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active, p.created_at, p.updated_at,
        u.id AS owner_user_id, u.name AS owner_name, u.email AS owner_email,
        u.specialization AS owner_specialization, up.avatar_url AS owner_avatar_url,
        COALESCE((
@@ -367,6 +387,12 @@ async function list_products_by_owner(owner_id) {
       images,
       features,
       details,
+      seo_title:      row.seo_title,
+      seo_description:row.seo_description,
+      seo_slug:       row.seo_slug,
+      seo_keyword:    row.seo_keyword,
+      seo_canonical:  row.seo_canonical,
+      seo_og_image:   row.seo_og_image,
       daily_capacity: row.daily_capacity,
       rating:         row.rating ? Number(row.rating) : 0,
       is_active:      !!row.is_active,
@@ -393,7 +419,7 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
     `SELECT
        p.id, p.owner_id, p.category_id, p.name, p.description, p.price,
        p.currency, p.location, p.lat, p.lng, p.image_url, p.daily_capacity,
-       p.features, p.details, p.rating, p.is_active, p.created_at, p.updated_at,
+       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug, p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active, p.created_at, p.updated_at,
        u.id AS owner_user_id, u.name AS owner_name, u.email AS owner_email,
        u.specialization AS owner_specialization, up.avatar_url AS owner_avatar_url,
        COALESCE((
@@ -438,6 +464,12 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
     images,
     features,
     details,
+    seo_title:      row.seo_title,
+    seo_description:row.seo_description,
+    seo_slug:       row.seo_slug,
+    seo_keyword:    row.seo_keyword,
+    seo_canonical:  row.seo_canonical,
+    seo_og_image:   row.seo_og_image,
     daily_capacity: row.daily_capacity,
     blocked_dates,
     vouchers,       // ← NEW
