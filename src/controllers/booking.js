@@ -88,7 +88,8 @@ const getMyBookings = async (req, res) => {
     b.created_at as createdAt,
     b.original_date as originalDate,
     b.reschedule_count as rescheduleCount,
-    p.image_url as productImage
+    p.image_url as productImage,
+    (SELECT id FROM reviews WHERE booking_id = b.id LIMIT 1) as reviewId
   FROM bookings b
   LEFT JOIN products p ON b.product_id = p.id
   WHERE b.user_id = ?

@@ -18,4 +18,9 @@ router.patch('/:id/cancel', requireAuth, bookingController.cancelMyBooking);
 // Reschedule booking
 router.patch('/:id/reschedule', requireAuth, bookingController.rescheduleMyBooking);
 
+// REVIEW ROUTES
+const reviewController = require('../controllers/review');
+router.post('/reviews', requireAuth, reviewController.submit_review);
+router.get('/reviews/product/:id', reviewController.get_product_reviews);
+
 module.exports = router;
