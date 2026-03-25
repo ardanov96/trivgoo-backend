@@ -16,6 +16,7 @@ const promoCampaign   = require("./routes/promo_campaign");
 const loyalty         = require("./routes/loyalty");
 const voucher         = require("./routes/voucher");
 const chat            = require("./routes/chat");
+const settings        = require("./routes/settings");
 
 Route.use("/", publicRoutes);
 Route.use("/auth", auth);
@@ -31,5 +32,6 @@ Route.use("/bookings", bookings);
 Route.use("/promo-campaigns", promoCampaign);
 Route.use("/loyalty", loyalty);
 Route.use("/vouchers", voucher);
+Route.use("/", settings);
 
 module.exports = Route;
