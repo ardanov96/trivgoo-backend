@@ -102,18 +102,8 @@ module.exports = {
       }
       // ------------------------------
 
-      set_session_user(req, new_user);
-
-      req.session.save((err) => {
-        if (err) {
-          console.error('[SESSION] save error:', err);
-          return misc.response(res, 500, true, 'Failed to create session');
-        }
-
-        return misc.response(res, 201, false, 'Register successfully. Please check your email to activate your account.', {
-          user: req.session.user,
-        });
-      });
+      // Kami tidak lagi membuat session di sini. User harus memverifikasi email untuk login.
+      return misc.response(res, 201, false, 'Register successfully. Please check your email to activate your account.');
     } catch (e) {
       console.error(e);
       return misc.response(res, 500, true, e.message || 'Internal server error');
@@ -145,7 +135,7 @@ module.exports = {
         return misc.response(res, 403, true, 'Akun tidak aktif');
       }
 
-      if (user.verification_status !== 'VERIFIED') {
+      if (user.verification_status === 'UNVERIFIED') {
         return misc.response(res, 403, true, 'Silakan verifikasi email Anda terlebih dahulu sebelum login');
       }
 
