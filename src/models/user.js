@@ -216,15 +216,23 @@ async function verify_email_token(token) {
 }
 
 async function mark_email_verified(email) {
+  const [rows] = await db.query(`SELECT role FROM users WHERE email = ? OR pending_email = ?`, [email, email]);
+  const role = rows[0]?.role;
+
+  let newStatus = 'VERIFIED';
+  if (role === 'AGENT') {
+    newStatus = 'WAITING_DOCUMENT';
+  }
+
   await db.query(`
     UPDATE users 
     SET 
       email = IF(pending_email = ?, pending_email, email),
       pending_email = NULL,
-      verification_status = 'VERIFIED', 
+      verification_status = IF(verification_status = 'UNVERIFIED', ?, verification_status), 
       updated_at = CURRENT_TIMESTAMP 
     WHERE email = ? OR pending_email = ?
-  `, [email, email, email]);
+  `, [email, newStatus, email, email]);
   await db.query(`DELETE FROM email_verifications WHERE email = ?`, [email]);
 }
 
