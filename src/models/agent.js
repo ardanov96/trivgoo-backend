@@ -297,14 +297,29 @@ async function list_agent_users_with_verification() {
 // ── Dashboard Stats ───────────────────────────────────────────────────────────
 
 async function get_agent_dashboard_stats(user_id) {
-  // Ambil commission_rate aktif dari settings
+  // Ambil specialization agent
+  let specialization = null;
+  try {
+    const [uRows] = await db.query(
+      `SELECT specialization FROM users WHERE id = ? LIMIT 1`, [user_id]
+    );
+    specialization = uRows[0]?.specialization ?? null;
+  } catch { /* fallback */ }
+
+  // Ambil commission_rate sesuai specialization
   let commission_rate = 11;
   try {
     const [sRows] = await db.query(
-      `SELECT commission_rate FROM settings WHERE id = 1 LIMIT 1`
+      `SELECT commission_rate, commission_rate_tour, commission_rate_transport
+       FROM settings WHERE id = 1 LIMIT 1`
     );
-    if (sRows[0]?.commission_rate != null) {
-      commission_rate = Number(sRows[0].commission_rate);
+    if (sRows[0]) {
+      const s = sRows[0];
+      const spec = String(specialization || '').toUpperCase();
+      if (spec === 'TOUR')      commission_rate = Number(s.commission_rate_tour      ?? s.commission_rate ?? 11);
+      else if (spec === 'TRANSPORT') commission_rate = Number(s.commission_rate_transport ?? s.commission_rate ?? 11);
+      else if (spec === 'STAY') commission_rate = 0;
+      else                      commission_rate = Number(s.commission_rate ?? 11);
     }
   } catch { /* fallback ke 11% */ }
 
@@ -407,14 +422,29 @@ async function get_agent_dashboard_stats(user_id) {
 // ── Weekly Sales ──────────────────────────────────────────────────────────────
 
 async function get_agent_weekly_sales(user_id) {
-  // Ambil commission_rate aktif
+  // Ambil specialization agent
+  let specialization = null;
+  try {
+    const [uRows] = await db.query(
+      `SELECT specialization FROM users WHERE id = ? LIMIT 1`, [user_id]
+    );
+    specialization = uRows[0]?.specialization ?? null;
+  } catch { /* fallback */ }
+
+  // Ambil commission_rate sesuai specialization
   let commission_rate = 11;
   try {
     const [sRows] = await db.query(
-      `SELECT commission_rate FROM settings WHERE id = 1 LIMIT 1`
+      `SELECT commission_rate, commission_rate_tour, commission_rate_transport
+       FROM settings WHERE id = 1 LIMIT 1`
     );
-    if (sRows[0]?.commission_rate != null) {
-      commission_rate = Number(sRows[0].commission_rate);
+    if (sRows[0]) {
+      const s = sRows[0];
+      const spec = String(specialization || '').toUpperCase();
+      if (spec === 'TOUR')           commission_rate = Number(s.commission_rate_tour      ?? s.commission_rate ?? 11);
+      else if (spec === 'TRANSPORT') commission_rate = Number(s.commission_rate_transport ?? s.commission_rate ?? 11);
+      else if (spec === 'STAY')      commission_rate = 0;
+      else                           commission_rate = Number(s.commission_rate ?? 11);
     }
   } catch { /* fallback */ }
 

@@ -5,41 +5,38 @@ const { execute, query } = require('../configs/db');
 const { send_payment_success_email, send_new_booking_notification_email } = require('../helpers/mailer');
 const { sendPushNotification } = require('../helpers/fcm');
 
-// Konversi aman tanpa timezone shift: "2026-03-24 09:00:00" -> "2026-03-24 09:00:00"
+// Konversi ISO 8601 (2026-03-24T01:00:00.000Z) -> MySQL DATETIME (2026-03-24 01:00:00)
 function toMySQLDatetime(val) {
   if (!val) return null;
-  
-  if (typeof val === 'string') {
-    // Ambil literal date & time (abaikan Z atau offset agar jam tidak berubah 8 jam)
-    const match = val.match(/^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(:\d{2})?(\.\d+)?(Z|[+-]\d{2}:\d{2})?$/);
-    if (match) {
-      const datePart = match[1];
-      const timePart = match[2];
-      const secondsPart = match[3] || ':00';
-      return `${datePart} ${timePart}${secondsPart}`;
-    }
-  }
-
   const d = new Date(val);
   if (isNaN(d.getTime())) return null;
-  const pad = (n) => n.toString().padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
 // ── Commission helper ─────────────────────────────────────────────────────────
 /**
- * Ambil commission_rate dari tabel settings (row id=1).
- * Fallback ke 11% jika belum ada.
+ * Ambil commission_rate dari tabel settings berdasarkan specialization agent.
+ * - TOUR      → commission_rate_tour
+ * - TRANSPORT → commission_rate_transport
+ * - STAY      → 0 (belum diberlakukan)
+ * - fallback  → commission_rate (legacy)
  */
-async function get_commission_rate() {
+async function get_commission_rate(specialization = null) {
   try {
     const rows = await execute(
-      `SELECT commission_rate FROM settings WHERE id = 1 LIMIT 1`
+      `SELECT commission_rate, commission_rate_tour, commission_rate_transport
+       FROM settings WHERE id = 1 LIMIT 1`
     );
     const data = Array.isArray(rows[0]) ? rows[0] : rows;
-    return data && data[0] && data[0].commission_rate != null
-      ? Number(data[0].commission_rate)
-      : 11;
+    const s = data && data[0] ? data[0] : null;
+    if (!s) return 11;
+
+    const spec = String(specialization || '').toUpperCase();
+    if (spec === 'TOUR')      return Number(s.commission_rate_tour      ?? s.commission_rate ?? 11);
+    if (spec === 'TRANSPORT') return Number(s.commission_rate_transport ?? s.commission_rate ?? 11);
+    if (spec === 'STAY')      return 0;
+
+    return Number(s.commission_rate ?? 11);
   } catch {
     return 11;
   }
@@ -47,11 +44,29 @@ async function get_commission_rate() {
 
 /**
  * Kalkulasi dan simpan komisi ke kolom bookings saat booking jadi PAID.
+ * Otomatis lookup specialization agent dari tabel products → users.
  * commission_amount = total_price × rate / 100
  * agent_earnings    = total_price − commission_amount
  */
 async function apply_commission(booking_id, total_price) {
-  const rate             = await get_commission_rate();
+  // Ambil specialization agent dari produk yang di-booking
+  let specialization = null;
+  try {
+    const agentRows = await execute(
+      `SELECT u.specialization
+       FROM bookings b
+       JOIN products p ON b.product_id = p.id
+       JOIN users u ON p.owner_id = u.id
+       WHERE b.id = ? LIMIT 1`,
+      [booking_id]
+    );
+    const agentData = Array.isArray(agentRows[0]) ? agentRows[0] : agentRows;
+    specialization = agentData?.[0]?.specialization ?? null;
+  } catch {
+    specialization = null;
+  }
+
+  const rate              = await get_commission_rate(specialization);
   const commission_amount = Math.round((Number(total_price) * rate) / 100);
   const agent_earnings    = Math.round(Number(total_price) - commission_amount);
 
@@ -65,8 +80,8 @@ async function apply_commission(booking_id, total_price) {
   );
 
   console.log(
-    `[COMMISSION] Booking #${booking_id} | total: ${total_price} | ` +
-    `rate: ${rate}% | fee: ${commission_amount} | agent_net: ${agent_earnings}`
+    `[COMMISSION] Booking #${booking_id} | specialization: ${specialization} | ` +
+    `total: ${total_price} | rate: ${rate}% | fee: ${commission_amount} | agent_net: ${agent_earnings}`
   );
 
   return { rate, commission_amount, agent_earnings };

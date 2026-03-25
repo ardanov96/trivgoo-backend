@@ -12,51 +12,28 @@ async function query(sql, params = []) {
   }
 }
 
-/**
- * normalize_image_path
- * Selalu menyimpan path relatif ke DB: /car-rental/xpander.jpg
- * Menghapus domain (http://localhost, https://trivgoo.com, dll) jika ada.
- */
 function normalize_image_path(path) {
   if (!path) return null;
-
-  // Jika sudah relative path, pastikan diawali tepat satu slash, tanpa double slash
   if (!path.startsWith('http://') && !path.startsWith('https://')) {
     return '/' + path.replace(/^\/+/, '');
   }
-
-  // Jika absolute URL, ambil pathname-nya saja
   try {
     const url = new URL(path);
-    // url.pathname sudah diawali '/', normalize double slash kalau ada
     return '/' + url.pathname.replace(/^\/+/, '');
   } catch {
-    // Fallback manual: buang skema + domain
     return '/' + path.replace(/^https?:\/\/[^/]+\/?/, '').replace(/^\/+/, '');
   }
 }
 
-/**
- * resolve_image_url
- * Dipakai saat MEMBACA dari DB → menghasilkan URL absolut untuk response API.
- * Jika path sudah absolute, kembalikan apa adanya.
- * Jika relative, tempelkan BASE_URL dari env.
- */
 function resolve_image_url(path) {
   if (!path) return null;
-
-  // Sudah absolute URL → kembalikan langsung
   if (path.startsWith('http://') || path.startsWith('https://')) return path;
-
   const BASE_URL =
     process.env.BASE_URL ||
     process.env.API_URL_DEV ||
     'http://localhost:4000';
-
-  // Pastikan tidak ada double slash antara BASE_URL dan path
-  const cleanBase = BASE_URL.replace(/\/+$/, '');   // hapus trailing slash dari base
-  const cleanPath = '/' + path.replace(/^\/+/, ''); // pastikan path diawali tepat satu slash
-
+  const cleanBase = BASE_URL.replace(/\/+$/, '');
+  const cleanPath = '/' + path.replace(/^\/+/, '');
   return `${cleanBase}${cleanPath}`;
 }
 
@@ -101,9 +78,6 @@ async function find_product_blocked_dates(product_id) {
 
 // ── Voucher helpers ───────────────────────────────────────────────────────────
 
-/**
- * Ambil semua voucher yang dilampirkan ke sebuah product.
- */
 async function find_product_vouchers(product_id) {
   const rows = await query(
     `SELECT v.*
@@ -126,44 +100,64 @@ async function build_product_response(row) {
   const vouchers      = await find_product_vouchers(row.id);
   const features      = safe_parse_json(row.features, []);
   const details       = safe_parse_json(row.details, null);
-  const specialization = row.owner_specialization ?? null;
+
+  // ── Delivery config: parse dari JSON column ─────────────────────────────
+  const delivery_config = safe_parse_json(row.delivery_config, null);
+  // ────────────────────────────────────────────────────────────────────────
 
   const image  = resolve_image_url(row.image_url);
-  const images = images_raw.map((f) => resolve_image_url(f));
+  const images = images_raw.map((f) => ({ url: resolve_image_url(f) }));
 
   return {
-    id:             row.id,
-    owner_id:       row.owner_id,
-    category_id:    row.category_id,
-    name:           row.name,
-    description:    row.description,
-    price:          Number(row.price),
-    currency:       row.currency,
-    location:       row.location,
-    lat:            row.lat,
-    lng:            row.lng,
+    id:              row.id,
+    owner_id:        row.owner_id,
+    category_id:     row.category_id,
+    name:            row.name,
+    description:     row.description,
+    price:           Number(row.price),
+    currency:        row.currency,
+    location:        row.location,
+    lat:             row.lat,
+    lng:             row.lng,
     image,
-    image_url:      image,
+    image_url:       image,
     images,
     features,
     details,
-    daily_capacity: row.daily_capacity,
+    daily_capacity:  row.daily_capacity,
     blocked_dates,
     vouchers,
-    rating:         row.rating ? Number(row.rating) : 0,
-    is_active:      !!row.is_active,
-    created_at:     row.created_at,
+    delivery_config, // ← field baru, null jika belum diset
+    rating:          row.rating ? Number(row.rating) : 0,
+    is_active:       !!row.is_active,
+    created_at:      row.created_at,
+    // SEO fields
+    seo_title:       row.seo_title       || null,
+    seo_description: row.seo_description || null,
+    seo_slug:        row.seo_slug        || null,
+    seo_keyword:     row.seo_keyword     || null,
+    seo_canonical:   row.seo_canonical   || null,
+    seo_og_image:    row.seo_og_image    || null,
   };
 }
 
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 async function create_product(payload) {
+  // delivery_config hanya relevan untuk transport (category_id 3),
+  // tapi tidak salah menyimpannya untuk kategori lain sebagai NULL.
+  const delivery_config_json = payload.delivery_config
+    ? JSON.stringify(payload.delivery_config)
+    : null;
+
   const result = await query(
     `INSERT INTO products (
        owner_id, category_id, name, description, price, currency,
-       location, image_url, features, details, daily_capacity
-     ) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+       location, image_url, features, details, daily_capacity,
+       lat, lng,
+       seo_title, seo_description, seo_slug, seo_keyword, seo_canonical, seo_og_image,
+       delivery_config
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       payload.owner_id,
       payload.category_id,
@@ -176,6 +170,15 @@ async function create_product(payload) {
       payload.features ? JSON.stringify(payload.features) : null,
       payload.details  ? JSON.stringify(payload.details)  : null,
       payload.daily_capacity || 10,
+      payload.lat  || null,
+      payload.lng  || null,
+      payload.seo_title        || null,
+      payload.seo_description  || null,
+      payload.seo_slug         || null,
+      payload.seo_keyword      || null,
+      payload.seo_canonical    || null,
+      payload.seo_og_image     || null,
+      delivery_config_json,
     ],
   );
 
@@ -213,19 +216,32 @@ async function update_product(product_id, owner_id, payload) {
     throw err;
   }
 
+  const delivery_config_json = payload.delivery_config
+    ? JSON.stringify(payload.delivery_config)
+    : null;
+
   await query(
     `UPDATE products SET
-       category_id    = ?,
-       name           = ?,
-       description    = ?,
-       price          = ?,
-       currency       = ?,
-       location       = ?,
-       image_url      = ?,
-       features       = ?,
-       details        = ?,
-       daily_capacity = ?,
-       updated_at     = CURRENT_TIMESTAMP
+       category_id     = ?,
+       name            = ?,
+       description     = ?,
+       price           = ?,
+       currency        = ?,
+       location        = ?,
+       image_url       = ?,
+       features        = ?,
+       details         = ?,
+       daily_capacity  = ?,
+       lat             = ?,
+       lng             = ?,
+       seo_title       = ?,
+       seo_description = ?,
+       seo_slug        = ?,
+       seo_keyword     = ?,
+       seo_canonical   = ?,
+       seo_og_image    = ?,
+       delivery_config = ?,
+       updated_at      = CURRENT_TIMESTAMP
      WHERE id = ? AND owner_id = ?`,
     [
       payload.category_id,
@@ -238,6 +254,15 @@ async function update_product(product_id, owner_id, payload) {
       payload.features ? JSON.stringify(payload.features) : null,
       payload.details  ? JSON.stringify(payload.details)  : null,
       payload.daily_capacity || 10,
+      payload.lat  || null,
+      payload.lng  || null,
+      payload.seo_title        || null,
+      payload.seo_description  || null,
+      payload.seo_slug         || null,
+      payload.seo_keyword      || null,
+      payload.seo_canonical    || null,
+      payload.seo_og_image     || null,
+      delivery_config_json,
       product_id,
       owner_id,
     ],
@@ -311,21 +336,10 @@ async function list_products_by_owner(owner_id) {
 
 // ── Voucher CRUD ──────────────────────────────────────────────────────────────
 
-/**
- * Ambil semua voucher yang terlampir ke sebuah product.
- * Bisa dipanggil oleh siapa saja (tidak harus owner).
- */
 async function get_product_vouchers(product_id) {
   return find_product_vouchers(product_id);
 }
 
-/**
- * Set (replace) semua voucher untuk sebuah product.
- * Hanya owner yang boleh mengubah.
- * @param {number} product_id
- * @param {number} owner_id
- * @param {number[]} voucher_ids
- */
 async function set_product_vouchers(product_id, owner_id, voucher_ids) {
   const existing = await find_product_row_by_id(product_id);
   if (!existing) return null;
