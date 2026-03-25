@@ -8,7 +8,7 @@ const { requireAuth } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
 
 // VERIFICATION ROUTES
-Route.post('/verification', requireAuth, upload.single('idDocument'), agent.submit_verification);
+Route.post('/verification', requireAuth, upload.fields([{ name: 'idDocument', maxCount: 1 }, { name: 'skDocument', maxCount: 1 }]), agent.submit_verification);
 Route.get('/verification', requireAuth, agent.get_my_verification);
 
 // DASHBOARD ROUTES

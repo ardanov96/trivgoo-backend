@@ -36,6 +36,7 @@ function normalize_upsert_payload(payload) {
 
   const company_name = payload.company_name;
   const id_document_url = payload.id_document_url;
+  const sk_document_url = payload.sk_document_url;
 
   return {
     user_id: uid,
@@ -48,6 +49,7 @@ function normalize_upsert_payload(payload) {
     bank_account_number,
     bank_account_holder,
     id_document_url: id_document_url,
+    sk_document_url: sk_document_url,
   };
 }
 
@@ -66,9 +68,10 @@ async function upsert_agent_verification(payload) {
       bank_account_number,
       bank_account_holder,
       id_document_url,
+      sk_document_url,
       status
     ) VALUES (
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING'
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING'
     )
     ON DUPLICATE KEY UPDATE
       agent_type           = VALUES(agent_type),
@@ -80,6 +83,7 @@ async function upsert_agent_verification(payload) {
       bank_account_number  = VALUES(bank_account_number),
       bank_account_holder  = VALUES(bank_account_holder),
       id_document_url      = VALUES(id_document_url),
+      sk_document_url      = VALUES(sk_document_url),
       status               = 'PENDING',
       rejection_reason     = NULL,
       reviewed_at          = NULL,
@@ -98,6 +102,7 @@ async function upsert_agent_verification(payload) {
     data.bank_account_number,
     data.bank_account_holder,
     data.id_document_url,
+    data.sk_document_url,
   ];
 
   const [result] = await db.query(sql, params);
@@ -312,6 +317,7 @@ async function list_agent_users_with_verification() {
       av.bank_account_holder AS v_bank_account_holder,
       av.specialization AS v_specialization,
       av.id_document_url AS v_id_document_url,
+      av.sk_document_url AS v_sk_document_url,
       av.status        AS v_status,
       av.reviewed_by   AS v_reviewed_by,
       av.reviewed_at   AS v_reviewed_at,
@@ -358,6 +364,7 @@ async function list_agent_users_with_verification() {
           bank_account_holder: r.v_bank_account_holder,
           specialization: r.v_specialization,
           id_document_url: r.v_id_document_url,
+          sk_document_url: r.v_sk_document_url,
           status: r.v_status,
           reviewed_by: r.v_reviewed_by,
           reviewed_at: r.v_reviewed_at,

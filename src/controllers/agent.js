@@ -102,14 +102,35 @@ module.exports = {
         return misc.response(res, 400, true, 'Semua field wajib diisi');
       }
 
+      const norm_agent_type = normalize_agent_type(agent_type);
+      const norm_specialization = normalize_agent_specialization(specialization);
+
+      // ✅ Handle multiple files from multer (req.files)
       let id_document_url = null;
-      if (req.file) {
-        id_document_url = build_avatar_db_path(req.file);
-        console.log(`[AGENT] File uploaded → DB path: ${id_document_url}`);
+      let sk_document_url = null;
+
+      if (req.files) {
+        if (req.files['idDocument'] && req.files['idDocument'][0]) {
+          const file = req.files['idDocument'][0];
+          const normalizedPath = file.path.replace(/\\/g, '/');
+          let cleanPath = normalizedPath.replace(/^public\//, '');
+          id_document_url = cleanPath.startsWith('/') ? cleanPath : '/' + cleanPath;
+        }
+
+        if (req.files['skDocument'] && req.files['skDocument'][0]) {
+          const file = req.files['skDocument'][0];
+          const normalizedPath = file.path.replace(/\\/g, '/');
+          let cleanPath = normalizedPath.replace(/^public\//, '');
+          sk_document_url = cleanPath.startsWith('/') ? cleanPath : '/' + cleanPath;
+        }
       }
 
       if (!id_document_url) {
-        return misc.response(res, 400, true, 'Document upload is required');
+        return misc.response(res, 400, true, 'Document upload (ID/NIB) is required');
+      }
+
+      if (norm_agent_type === 'CORPORATE' && !sk_document_url) {
+        return misc.response(res, 400, true, 'Surat Keterangan (SK) upload is required');
       }
 
       const payload = {
@@ -122,7 +143,8 @@ module.exports = {
         bank_name,
         bank_account_number,
         bank_account_holder,
-        id_document_url,
+        id_document_url,  // now comes from req.files['idDocument']
+        sk_document_url: norm_agent_type === 'CORPORATE' ? sk_document_url : null,
       };
 
       await upsert_agent_verification(payload);
