@@ -1,6 +1,7 @@
 const db = require('../configs/db');
 const { response } = require('../helpers/response');
 const payment_service = require('../services/payment_service');
+const PaymentTransaction = require('../models/payment_transaction');
 
 const getAllBookings = async (req, res) => {
   try {
@@ -217,7 +218,7 @@ const cancelMyBooking = async (req, res) => {
   try {
     // Cek booking milik user ini
     const [rows] = await db.query(
-      'SELECT id, status, payment_status, external_id, payment_request_id FROM bookings WHERE id = ? AND user_id = ?',
+      'SELECT id, status, payment_status, external_id, payment_request_id, payment_gateway FROM bookings WHERE id = ? AND user_id = ?',
       [id, userId]
     );
 
@@ -246,10 +247,18 @@ const cancelMyBooking = async (req, res) => {
       [id, userId]
     );
 
-    // Batalkan juga tagihan di Payment Gateway
+    // Batalkan tagihan spesifik di Payment Gateway yang digunakan saat checkout
     if (booking.external_id) {
-      // Kirim payment_request_id (UUID transaksi asli) agar DOKU dapat memverifikasi pembatalan
-      await payment_service.cancelTransaction(booking.external_id, booking.payment_request_id || null);
+      const latestTransaction = booking.payment_gateway
+        ? await PaymentTransaction.findLatestByExternalId(booking.external_id, booking.payment_gateway)
+        : null;
+
+      await payment_service.cancelTransaction(
+        booking.external_id, 
+        booking.payment_gateway, 
+        booking.payment_request_id || null,
+        latestTransaction?.gateway_invoice_id || null
+      );
     }
 
     return response(res, 200, false, 'Booking berhasil dibatalkan', { id: Number(id), status: 'CANCELLED' });
