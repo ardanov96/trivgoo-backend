@@ -20,7 +20,7 @@ const settings        = require("./routes/settings");
 const localeRouter    = require('./routes/locale');  // ✅ tetap
 
 // ── Routes ──────────────────────────────────────────────────────────────────
-Route.use("/", localeRouter);       // ✅ Route bukan router
+Route.use("/locale", localeRouter);       // ✅ Route bukan router
 Route.use("/", publicRoutes);
 Route.use("/auth", auth);
 Route.use("/users", users);
