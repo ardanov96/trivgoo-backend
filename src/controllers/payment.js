@@ -371,6 +371,82 @@ const createPayment = async (req, res) => {
   }
 };
 
+const getPaymentStatus = async (req, res) => {
+  try {
+    const externalId = req.params.externalId || req.query.invoice || req.query.external_id;
+    if (!externalId) {
+      return misc.response(res, 400, true, 'External ID / invoice is required');
+    }
+
+    const bookingRows = await execute(
+      `SELECT
+         b.id,
+         b.external_id,
+         b.status,
+         b.payment_status,
+         b.payment_gateway,
+         b.payment_url,
+         b.payment_method,
+         b.payment_expires_at,
+         b.paid_at,
+         b.total_price,
+         b.product_name,
+         b.updated_at
+       FROM bookings b
+       WHERE b.external_id = ?
+       LIMIT 1`,
+      [externalId]
+    );
+    const bookings = Array.isArray(bookingRows[0]) ? bookingRows[0] : bookingRows;
+
+    if (!bookings || bookings.length === 0) {
+      return misc.response(res, 404, true, `Booking ${externalId} not found`, null);
+    }
+
+    const booking = bookings[0];
+    const transactionRows = await execute(
+      `SELECT
+         id,
+         gateway,
+         external_id,
+         gateway_invoice_id,
+         status,
+         payment_url,
+         payment_method,
+         payment_channel,
+         expires_at,
+         paid_at,
+         updated_at
+       FROM payment_transactions
+       WHERE external_id = ? AND gateway = ?
+       ORDER BY id DESC
+       LIMIT 1`,
+      [externalId, booking.payment_gateway || 'xendit']
+    );
+    const transactions = Array.isArray(transactionRows[0]) ? transactionRows[0] : transactionRows;
+    const latestTransaction = transactions && transactions.length > 0 ? transactions[0] : null;
+
+    return misc.response(res, 200, false, 'Payment status fetched', {
+      external_id: booking.external_id,
+      booking_id: booking.id,
+      booking_status: booking.status,
+      payment_status: booking.payment_status,
+      payment_gateway: booking.payment_gateway,
+      payment_url: latestTransaction?.payment_url || booking.payment_url || null,
+      payment_method: latestTransaction?.payment_method || booking.payment_method || null,
+      payment_channel: latestTransaction?.payment_channel || null,
+      payment_expires_at: latestTransaction?.expires_at || booking.payment_expires_at || null,
+      paid_at: latestTransaction?.paid_at || booking.paid_at || null,
+      total_price: booking.total_price,
+      product_name: booking.product_name,
+      updated_at: latestTransaction?.updated_at || booking.updated_at || null,
+    });
+  } catch (error) {
+    console.error('[PAYMENT] getPaymentStatus error:', error.message);
+    return misc.response(res, 500, true, error.message || 'Internal Server Error');
+  }
+};
+
 /**
  * Universal safe webhook logic dispatcher
  */
@@ -416,7 +492,17 @@ const processWebhook = async (gatewayName, notification, headers, routingPath, r
     const currentBooking = Array.isArray(bookingRows[0]) ? bookingRows[0] : bookingRows;
 
     if (!currentBooking || currentBooking.length === 0) {
-      throw new Error(`Booking ${invoice_number} not found in database`);
+      await execute(
+        `UPDATE webhook_logs
+         SET status = 'failed', error_message = ?, processed_at = NOW()
+         WHERE external_id = ? AND gateway = ?
+         ORDER BY id DESC LIMIT 1`,
+        [`Booking ${invoice_number} not found in database`, invoice_number, gatewayName]
+      ).catch(() => {});
+      return res.status(202).json({
+        success: true,
+        message: `Webhook received but booking ${invoice_number} was not found in database`,
+      });
     }
 
     const booking = currentBooking[0];
@@ -476,4 +562,4 @@ const handleXenditWebhook = async (req, res) => {
   return processWebhook('xendit', req.body, req.headers, req.originalUrl || '/api/v1/payment/webhook/xendit', res);
 };
 
-module.exports = { createPayment, handleDokuWebhook, handleXenditWebhook };
+module.exports = { createPayment, getPaymentStatus, handleDokuWebhook, handleXenditWebhook };

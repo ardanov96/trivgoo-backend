@@ -4,6 +4,7 @@ const paymentController = require('../controllers/payment');
 
 // Main Checkout Endpoint
 Route.post('/create-payment', paymentController.createPayment);
+Route.get('/status/:externalId', paymentController.getPaymentStatus);
 
 // Split Webhooks (Source of Truth)
 Route.post('/webhook/xendit', paymentController.handleXenditWebhook);
