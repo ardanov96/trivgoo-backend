@@ -132,11 +132,11 @@ module.exports = {
       }
 
       if (!user.is_active) {
-        return misc.response(res, 403, true, 'Akun tidak aktif');
+        return misc.response(res, 403, true, 'Akun Anda telah dinonaktifkan. Hubungi support untuk bantuan.');
       }
 
       if (user.verification_status === 'UNVERIFIED') {
-        return misc.response(res, 403, true, 'Silakan verifikasi email Anda terlebih dahulu sebelum login');
+        return misc.response(res, 403, true, 'Akun Anda belum teraktivasi. Silakan cek email Anda untuk mengaktifkan akun.');
       }
 
       req.session.regenerate((regen_err) => {
