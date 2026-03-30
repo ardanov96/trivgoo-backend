@@ -322,11 +322,32 @@ const createPayment = async (req, res) => {
     const finalDate = order.date || new Date().toISOString().split('T')[0];
     const transIdentifier = transaction.gateway_invoice_id || transaction.request_id || null;
 
+    // Extract booking metadata from req.body for persistence
+    const bookingMeta = {
+      pickup_location:  req.body.pickup_location  || req.body.pickupAddress  || null,
+      dropoff_location: req.body.dropoff_location || req.body.dropoffAddress || null,
+      with_driver:      req.body.withDriver ? 1 : 0,
+      vehicle_type:     req.body.vehicle_type || null,
+      duration:         Number(req.body.duration) || 1,
+      pickup_fee:       Number(req.body.pickup_fee  || req.body.pickupFee  || 0),
+      dropoff_fee:      Number(req.body.dropoff_fee || req.body.dropoffFee || 0),
+      admin_fee:        Number(req.body.admin_fee || 0),
+      add_ons_json:     JSON.stringify({
+        withDriver:       Boolean(req.body.withDriver),
+        premiumInsurance: Boolean(req.body.premiumInsurance),
+        childSeat:        Boolean(req.body.childSeat),
+      }),
+    };
+
     // Secure insertions enforcing the actual selected gateway
     await execute(
       `INSERT INTO bookings 
-        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, start_time, end_time, status, payment_url, payment_gateway, payment_status, payment_request_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, 'PENDING', ?, NOW())
+        (external_id, user_id, product_id, user_name, product_name, quantity, total_price, date, start_time, end_time,
+         pickup_location, dropoff_location, with_driver, vehicle_type, duration, pickup_fee, dropoff_fee, admin_fee, add_ons_json,
+         status, payment_url, payment_gateway, payment_status, payment_request_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               ?, ?, ?, ?, ?, ?, ?, ?, ?,
+               'PENDING', ?, ?, 'PENDING', ?, NOW())
        ON DUPLICATE KEY UPDATE
         payment_url        = VALUES(payment_url),
         payment_gateway    = VALUES(payment_gateway),
@@ -334,10 +355,22 @@ const createPayment = async (req, res) => {
         date               = VALUES(date),
         start_time         = VALUES(start_time),
         end_time           = VALUES(end_time),
+        pickup_location    = VALUES(pickup_location),
+        dropoff_location   = VALUES(dropoff_location),
+        with_driver        = VALUES(with_driver),
+        vehicle_type       = VALUES(vehicle_type),
+        duration           = VALUES(duration),
+        pickup_fee         = VALUES(pickup_fee),
+        dropoff_fee        = VALUES(dropoff_fee),
+        admin_fee          = VALUES(admin_fee),
+        add_ons_json       = VALUES(add_ons_json),
         updated_at         = NOW()`,
       [
         order.id, user_id || null, order.product_id || null, order.name, order.product_name || '-',
         order.quantity || 1, order.amount, finalDate, order.start_time || null, order.end_time || null,
+        bookingMeta.pickup_location, bookingMeta.dropoff_location, bookingMeta.with_driver,
+        bookingMeta.vehicle_type, bookingMeta.duration, bookingMeta.pickup_fee, bookingMeta.dropoff_fee,
+        bookingMeta.admin_fee, bookingMeta.add_ons_json,
         transaction.payment_url || null, config.gateway, transIdentifier
       ]
     );
