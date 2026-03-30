@@ -52,8 +52,12 @@ async function find_product_row_by_id(product_id) {
     `SELECT
        p.id, p.owner_id, p.category_id, p.name, p.description, p.price,
        p.currency, p.location, p.lat, p.lng, p.image_url, p.daily_capacity,
-       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug, p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active, p.created_at,
+       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug,
+       p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active,
+       p.created_at,
        u.specialization AS owner_specialization,
+       u.name           AS owner_name,
+       av.company_name  AS owner_company_name,
        COALESCE((
          SELECT JSON_ARRAYAGG(
            JSON_OBJECT('id', pi.id, 'url', pi.image_url, 'sort_order', pi.sort_order, 'created_at', pi.created_at)
@@ -61,6 +65,7 @@ async function find_product_row_by_id(product_id) {
        ), JSON_ARRAY()) AS images_json
      FROM products p
      JOIN users u ON u.id = p.owner_id
+     LEFT JOIN agent_verifications av ON av.user_id = p.owner_id
      WHERE p.id = ?
      LIMIT 1`,
     [product_id]
@@ -85,18 +90,40 @@ async function find_product_blocked_dates(product_id) {
   return rows.map((r) => r.blocked_date);
 }
 
-// ── NEW: Voucher finder ───────────────────────────────────────────────────────
-
+// ── Voucher finder: admin global + agent linked ───────────────────────────────
 async function find_product_vouchers(product_id) {
-  const rows = await query(
-    `SELECT v.*
-     FROM product_vouchers pv
-     JOIN vouchers v ON v.id = pv.voucher_id
-     WHERE pv.product_id = ?
+  // 1. Semua voucher ADMIN aktif (global, berlaku untuk semua produk)
+  const adminRows = await query(
+    `SELECT v.*, 'admin' AS scope_owner
+     FROM vouchers v
+     WHERE (v.scope_owner = 'admin' OR v.scope_owner IS NULL)
+       AND v.is_active = 1
+       AND (v.starts_at  IS NULL OR v.starts_at  <= NOW())
+       AND (v.expires_at IS NULL OR v.expires_at >= NOW())
+       AND (v.max_usage  IS NULL OR v.used_count  < v.max_usage)
      ORDER BY v.created_at DESC`,
-    [product_id]
   );
-  return rows;
+
+  // 2. Voucher AGENT yang di-link ke produk ini
+  const agentRows = await query(
+    `SELECT v.*, 'agent' AS scope_owner
+     FROM vouchers v
+     INNER JOIN product_vouchers pv ON pv.voucher_id = v.id
+     WHERE pv.product_id = ?
+       AND v.scope_owner  = 'agent'
+       AND v.is_active    = 1
+       AND (v.starts_at  IS NULL OR v.starts_at  <= NOW())
+       AND (v.expires_at IS NULL OR v.expires_at >= NOW())
+       AND (v.max_usage  IS NULL OR v.used_count  < v.max_usage)
+     ORDER BY v.created_at DESC`,
+    [product_id],
+  );
+
+  // 3. Gabungkan, deduplicate by id
+  const map = new Map();
+  for (const row of adminRows) map.set(row.id, row);
+  for (const row of agentRows) map.set(row.id, row);
+  return Array.from(map.values());
 }
 
 async function find_vouchers_for_products(product_ids) {
@@ -125,7 +152,7 @@ async function build_product_response(row) {
 
   const images_raw    = await find_product_images(row.id);
   const blocked_dates = await find_product_blocked_dates(row.id);
-  const vouchers      = await find_product_vouchers(row.id);   // ← NEW
+  const vouchers      = await find_product_vouchers(row.id);
 
   const features       = safeJsonParse(row.features, []);
   const details        = safeJsonParse(row.details, {});
@@ -156,10 +183,15 @@ async function build_product_response(row) {
     seo_og_image:   row.seo_og_image,
     daily_capacity: row.daily_capacity,
     blocked_dates,
-    vouchers,       // ← NEW
+    vouchers,
     rating:         row.rating ? Number(row.rating) : 0,
     is_active:      !!row.is_active,
     created_at:     row.created_at,
+    // ✅ FIX: sertakan owner dengan company_name dari agent_verifications
+    owner: {
+      name:         row.owner_name         || null,
+      company_name: row.owner_company_name || null,
+    },
   };
 }
 
@@ -167,9 +199,15 @@ async function build_product_response(row) {
 
 async function list_all_products() {
   const rows = await query(
-    `SELECT p.*, u.name AS owner_name, u.specialization AS owner_specialization
+    // ✅ FIX: tambahkan LEFT JOIN ke agent_verifications dan sertakan company_name
+    `SELECT
+       p.*,
+       u.name           AS owner_name,
+       u.specialization AS owner_specialization,
+       av.company_name  AS owner_company_name
      FROM products p
      JOIN users u ON u.id = p.owner_id
+     LEFT JOIN agent_verifications av ON av.user_id = p.owner_id
      WHERE p.is_active = 1
      ORDER BY p.created_at DESC`
   );
@@ -186,7 +224,12 @@ async function list_all_products() {
     image_url: resolve_image_url(row.image_url, row.owner_specialization),
     features:  safeJsonParse(row.features, []),
     details:   safeJsonParse(row.details, {}),
-    vouchers:  vouchersMap[row.id] ?? [],  // ambil dari map, no extra query
+    vouchers:  vouchersMap[row.id] ?? [],
+    // ✅ FIX: sertakan owner dengan company_name
+    owner: {
+      name:         row.owner_name         || null,
+      company_name: row.owner_company_name || null,
+    },
   }));
 }
 
@@ -344,12 +387,16 @@ async function list_products_by_owner(owner_id) {
   if (!Number.isFinite(oid) || oid <= 0) return [];
 
   const rows = await query(
+    // ✅ FIX: tambahkan LEFT JOIN ke agent_verifications
     `SELECT
        p.id, p.owner_id, p.category_id, p.name, p.description, p.price,
        p.currency, p.location, p.lat, p.lng, p.image_url, p.daily_capacity,
-       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug, p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active, p.created_at, p.updated_at,
+       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug,
+       p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active,
+       p.created_at, p.updated_at,
        u.id AS owner_user_id, u.name AS owner_name, u.email AS owner_email,
        u.specialization AS owner_specialization, up.avatar_url AS owner_avatar_url,
+       av.company_name  AS owner_company_name,
        COALESCE((
          SELECT JSON_ARRAYAGG(
            JSON_OBJECT('id', pi.id, 'url', pi.image_url, 'sort_order', pi.sort_order, 'created_at', pi.created_at)
@@ -358,6 +405,7 @@ async function list_products_by_owner(owner_id) {
      FROM products p
      JOIN users u ON u.id = p.owner_id
      LEFT JOIN user_profiles up ON up.user_id = u.id
+     LEFT JOIN agent_verifications av ON av.user_id = p.owner_id
      WHERE p.owner_id = ?
      ORDER BY p.created_at DESC`,
     [oid]
@@ -404,6 +452,8 @@ async function list_products_by_owner(owner_id) {
         email:          row.owner_email,
         specialization: row.owner_specialization,
         avatar_url:     row.owner_avatar_url ?? null,
+        // ✅ FIX: sertakan company_name
+        company_name:   row.owner_company_name || null,
       },
     };
   });
@@ -416,12 +466,16 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
   if (!Number.isFinite(oid) || oid <= 0) return null;
 
   const rows = await query(
+    // ✅ FIX: tambahkan LEFT JOIN ke agent_verifications
     `SELECT
        p.id, p.owner_id, p.category_id, p.name, p.description, p.price,
        p.currency, p.location, p.lat, p.lng, p.image_url, p.daily_capacity,
-       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug, p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active, p.created_at, p.updated_at,
+       p.features, p.details, p.seo_title, p.seo_description, p.seo_slug,
+       p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active,
+       p.created_at, p.updated_at,
        u.id AS owner_user_id, u.name AS owner_name, u.email AS owner_email,
        u.specialization AS owner_specialization, up.avatar_url AS owner_avatar_url,
+       av.company_name  AS owner_company_name,
        COALESCE((
          SELECT JSON_ARRAYAGG(
            JSON_OBJECT('id', pi.id, 'url', pi.image_url, 'sort_order', pi.sort_order, 'created_at', pi.created_at)
@@ -430,6 +484,7 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
      FROM products p
      JOIN users u ON u.id = p.owner_id
      LEFT JOIN user_profiles up ON up.user_id = u.id
+     LEFT JOIN agent_verifications av ON av.user_id = p.owner_id
      WHERE p.id = ? AND p.owner_id = ?
      LIMIT 1`,
     [pid, oid]
@@ -446,7 +501,7 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
   const features      = (() => { const r = safeJsonParse(row.features, []); return Array.isArray(r) ? r : []; })();
   const details       = (() => { const r = safeJsonParse(row.details, {});  return typeof r === "object" && r !== null ? r : {}; })();
   const blocked_dates = await find_product_blocked_dates(pid);
-  const vouchers      = await find_product_vouchers(pid);   // ← NEW
+  const vouchers      = await find_product_vouchers(pid);
 
   return {
     id:             row.id,
@@ -472,7 +527,7 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
     seo_og_image:   row.seo_og_image,
     daily_capacity: row.daily_capacity,
     blocked_dates,
-    vouchers,       // ← NEW
+    vouchers,
     rating:         row.rating ? Number(row.rating) : 0,
     is_active:      !!row.is_active,
     created_at:     row.created_at,
@@ -483,6 +538,8 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
       email:          row.owner_email,
       specialization: row.owner_specialization,
       avatar_url:     row.owner_avatar_url ?? null,
+      // ✅ FIX: sertakan company_name
+      company_name:   row.owner_company_name || null,
     },
   };
 }
@@ -578,7 +635,7 @@ async function set_product_active_for_owner(product_id, owner_id, active) {
   return { affected_rows: res.affectedRows || 0 };
 }
 
-// ── NEW: Voucher CRUD ─────────────────────────────────────────────────────────
+// ── Voucher CRUD ──────────────────────────────────────────────────────────────
 
 async function get_product_vouchers(product_id) {
   return find_product_vouchers(product_id);
@@ -637,6 +694,6 @@ module.exports = {
   get_product_by_id,
   resolve_image_url,
   set_product_active_for_owner,
-  get_product_vouchers,     // ← NEW
-  set_product_vouchers,     // ← NEW
+  get_product_vouchers,
+  set_product_vouchers,
 };

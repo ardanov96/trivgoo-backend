@@ -1,5 +1,3 @@
-// src/models/agent_product.js
-
 const conn = require('../configs/db');
 
 async function query(sql, params = []) {
@@ -78,6 +76,71 @@ async function find_product_blocked_dates(product_id) {
 
 // ── Voucher helpers ───────────────────────────────────────────────────────────
 
+/**
+ * Gabungkan:
+ *   1. Semua voucher ADMIN aktif (global — berlaku untuk semua produk)
+ *   2. Voucher AGENT yang sudah ditautkan ke produk ini via product_vouchers
+ *
+ * Menggunakan helper query() yang sudah ada di file ini (bukan db.execute langsung).
+ */
+async function get_merged_product_vouchers(product_id) {
+  // ── Voucher admin aktif (global) ─────────────────────────────────────────
+  const adminRows = await query(
+    `SELECT v.*, 'admin' AS scope_owner_resolved
+     FROM vouchers v
+     WHERE (v.scope_owner = 'admin' OR v.scope_owner IS NULL)
+       AND v.is_active = 1
+       AND (v.starts_at  IS NULL OR v.starts_at  <= NOW())
+       AND (v.expires_at IS NULL OR v.expires_at >= NOW())
+       AND (v.max_usage  IS NULL OR v.used_count  < v.max_usage)
+     ORDER BY v.created_at DESC`,
+  );
+
+  console.log('[VOUCHER] adminRows count:', adminRows.length);
+
+  // ── Voucher agent yang di-link ke produk ini ──────────────────────────────
+  const agentRows = await query(
+    `SELECT v.*, 'agent' AS scope_owner_resolved
+     FROM vouchers v
+     INNER JOIN product_vouchers pv ON pv.voucher_id = v.id
+     WHERE pv.product_id = ?
+       AND v.scope_owner = 'agent'
+       AND v.is_active   = 1
+       AND (v.starts_at  IS NULL OR v.starts_at  <= NOW())
+       AND (v.expires_at IS NULL OR v.expires_at >= NOW())
+       AND (v.max_usage  IS NULL OR v.used_count  < v.max_usage)
+     ORDER BY v.created_at DESC`,
+    [product_id],
+  );
+
+  // ── Format & deduplicate ──────────────────────────────────────────────────
+  const fmt = (row) => ({
+    id:              row.id,
+    code:            row.code,
+    description:     row.description,
+    type:            row.type,
+    value:           Number(row.value),
+    max_discount:    row.max_discount  != null ? Number(row.max_discount)  : null,
+    min_transaction: Number(row.min_transaction),
+    scope:           row.scope,
+    scope_ids:       row.scope_ids || null,
+    max_usage:       row.max_usage != null ? Number(row.max_usage) : null,
+    used_count:      Number(row.used_count || 0),
+    per_user:        Number(row.per_user),
+    starts_at:       row.starts_at,
+    expires_at:      row.expires_at,
+    is_active:       Number(row.is_active),
+    scope_owner:     row.scope_owner_resolved || row.scope_owner || 'admin',
+  });
+
+  const map = new Map();
+  for (const row of adminRows) map.set(row.id, fmt(row));
+  for (const row of agentRows) map.set(row.id, fmt(row));
+
+  return Array.from(map.values());
+}
+
+// Tetap ada untuk backward compat (dipakai set_product_vouchers)
 async function find_product_vouchers(product_id) {
   const rows = await query(
     `SELECT v.*
@@ -97,13 +160,12 @@ async function build_product_response(row) {
 
   const images_raw    = await find_product_images(row.id);
   const blocked_dates = await find_product_blocked_dates(row.id);
-  const vouchers      = await find_product_vouchers(row.id);
   const features      = safe_parse_json(row.features, []);
   const details       = safe_parse_json(row.details, null);
-
-  // ── Delivery config: parse dari JSON column ─────────────────────────────
   const delivery_config = safe_parse_json(row.delivery_config, null);
-  // ────────────────────────────────────────────────────────────────────────
+
+  // ✅ Gunakan get_merged_product_vouchers — gabungkan admin global + agent linked
+  const vouchers = await get_merged_product_vouchers(row.id);
 
   const image  = resolve_image_url(row.image_url);
   const images = images_raw.map((f) => ({ url: resolve_image_url(f) }));
@@ -126,12 +188,11 @@ async function build_product_response(row) {
     details,
     daily_capacity:  row.daily_capacity,
     blocked_dates,
-    vouchers,
-    delivery_config, // ← field baru, null jika belum diset
+    vouchers,          // ← sekarang berisi admin global + agent linked
+    delivery_config,
     rating:          row.rating ? Number(row.rating) : 0,
     is_active:       !!row.is_active,
     created_at:      row.created_at,
-    // SEO fields
     seo_title:       row.seo_title       || null,
     seo_description: row.seo_description || null,
     seo_slug:        row.seo_slug        || null,
@@ -144,8 +205,6 @@ async function build_product_response(row) {
 // ── CRUD ──────────────────────────────────────────────────────────────────────
 
 async function create_product(payload) {
-  // delivery_config hanya relevan untuk transport (category_id 3),
-  // tapi tidak salah menyimpannya untuk kategori lain sebagai NULL.
   const delivery_config_json = payload.delivery_config
     ? JSON.stringify(payload.delivery_config)
     : null;
@@ -364,69 +423,6 @@ async function set_product_vouchers(product_id, owner_id, voucher_ids) {
   }
 
   return get_product_vouchers(product_id);
-}
-
-async function get_merged_product_vouchers(product_id) {
-  const now = new Date();
- 
-  // ── 1. Voucher admin aktif (global, tidak perlu di-link ke produk) ──────
-  const [adminRows] = await db.execute(
-    `SELECT
-       v.*,
-       'admin' AS scope_owner_resolved
-     FROM vouchers v
-     WHERE v.scope_owner = 'admin'
-       AND v.is_active   = 1
-       AND (v.starts_at  IS NULL OR v.starts_at  <= NOW())
-       AND (v.expires_at IS NULL OR v.expires_at >= NOW())
-       AND (v.max_usage  IS NULL OR v.used_count  < v.max_usage)
-     ORDER BY v.created_at DESC`
-  );
- 
-  // ── 2. Voucher agent yang ditautkan ke produk ini ────────────────────────
-  //    Hanya ambil yang aktif & belum expired/habis kuota
-  const [agentRows] = await db.execute(
-    `SELECT
-       v.*,
-       'agent' AS scope_owner_resolved
-     FROM vouchers v
-     INNER JOIN product_vouchers pv ON pv.voucher_id = v.id
-     WHERE pv.product_id  = ?
-       AND v.scope_owner  = 'agent'
-       AND v.is_active    = 1
-       AND (v.starts_at   IS NULL OR v.starts_at  <= NOW())
-       AND (v.expires_at  IS NULL OR v.expires_at >= NOW())
-       AND (v.max_usage   IS NULL OR v.used_count  < v.max_usage)
-     ORDER BY v.created_at DESC`,
-    [product_id]
-  );
- 
-  // ── 3. Format & deduplicate (pakai Map by id) ────────────────────────────
-  const fmt = (row) => ({
-    id:              row.id,
-    code:            row.code,
-    description:     row.description,
-    type:            row.type,
-    value:           Number(row.value),
-    max_discount:    row.max_discount  != null ? Number(row.max_discount)  : null,
-    min_transaction: Number(row.min_transaction),
-    scope:           row.scope,
-    scope_ids:       row.scope_ids     || null,
-    max_usage:       row.max_usage     != null ? Number(row.max_usage)     : null,
-    used_count:      Number(row.used_count || 0),
-    per_user:        Number(row.per_user),
-    starts_at:       row.starts_at,
-    expires_at:      row.expires_at,
-    is_active:       Number(row.is_active),
-    scope_owner:     row.scope_owner_resolved || row.scope_owner || 'admin',
-  });
- 
-  const map = new Map();
-  // Admin dulu, lalu agent — jika ada duplikat ID (tidak mungkin tapi jaga-jaga)
-  for (const row of adminRows)  map.set(row.id, fmt(row));
-  for (const row of agentRows)  map.set(row.id, fmt(row));
- 
-  return Array.from(map.values());
 }
 
 // ── Exports ───────────────────────────────────────────────────────────────────
