@@ -366,6 +366,69 @@ async function set_product_vouchers(product_id, owner_id, voucher_ids) {
   return get_product_vouchers(product_id);
 }
 
+async function get_merged_product_vouchers(product_id) {
+  const now = new Date();
+ 
+  // ── 1. Voucher admin aktif (global, tidak perlu di-link ke produk) ──────
+  const [adminRows] = await db.execute(
+    `SELECT
+       v.*,
+       'admin' AS scope_owner_resolved
+     FROM vouchers v
+     WHERE v.scope_owner = 'admin'
+       AND v.is_active   = 1
+       AND (v.starts_at  IS NULL OR v.starts_at  <= NOW())
+       AND (v.expires_at IS NULL OR v.expires_at >= NOW())
+       AND (v.max_usage  IS NULL OR v.used_count  < v.max_usage)
+     ORDER BY v.created_at DESC`
+  );
+ 
+  // ── 2. Voucher agent yang ditautkan ke produk ini ────────────────────────
+  //    Hanya ambil yang aktif & belum expired/habis kuota
+  const [agentRows] = await db.execute(
+    `SELECT
+       v.*,
+       'agent' AS scope_owner_resolved
+     FROM vouchers v
+     INNER JOIN product_vouchers pv ON pv.voucher_id = v.id
+     WHERE pv.product_id  = ?
+       AND v.scope_owner  = 'agent'
+       AND v.is_active    = 1
+       AND (v.starts_at   IS NULL OR v.starts_at  <= NOW())
+       AND (v.expires_at  IS NULL OR v.expires_at >= NOW())
+       AND (v.max_usage   IS NULL OR v.used_count  < v.max_usage)
+     ORDER BY v.created_at DESC`,
+    [product_id]
+  );
+ 
+  // ── 3. Format & deduplicate (pakai Map by id) ────────────────────────────
+  const fmt = (row) => ({
+    id:              row.id,
+    code:            row.code,
+    description:     row.description,
+    type:            row.type,
+    value:           Number(row.value),
+    max_discount:    row.max_discount  != null ? Number(row.max_discount)  : null,
+    min_transaction: Number(row.min_transaction),
+    scope:           row.scope,
+    scope_ids:       row.scope_ids     || null,
+    max_usage:       row.max_usage     != null ? Number(row.max_usage)     : null,
+    used_count:      Number(row.used_count || 0),
+    per_user:        Number(row.per_user),
+    starts_at:       row.starts_at,
+    expires_at:      row.expires_at,
+    is_active:       Number(row.is_active),
+    scope_owner:     row.scope_owner_resolved || row.scope_owner || 'admin',
+  });
+ 
+  const map = new Map();
+  // Admin dulu, lalu agent — jika ada duplikat ID (tidak mungkin tapi jaga-jaga)
+  for (const row of adminRows)  map.set(row.id, fmt(row));
+  for (const row of agentRows)  map.set(row.id, fmt(row));
+ 
+  return Array.from(map.values());
+}
+
 // ── Exports ───────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -375,4 +438,5 @@ module.exports = {
   list_products_by_owner,
   get_product_vouchers,
   set_product_vouchers,
+  get_merged_product_vouchers,
 };
