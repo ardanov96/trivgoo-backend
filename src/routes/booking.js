@@ -5,6 +5,7 @@ const { requireAuth } = require('../middleware/auth');
 
 // Get bookings for logged-in customer
 router.get('/my', requireAuth, bookingController.getMyBookings);
+router.get('/my/:id', requireAuth, bookingController.getMyBookingDetail);
 
 // Get all bookings dengan filter/search (admin)
 router.get('/', requireAuth, bookingController.getAllBookings);
