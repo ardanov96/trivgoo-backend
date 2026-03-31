@@ -18,12 +18,10 @@ const voucher         = require("./routes/voucher");
 const chat            = require("./routes/chat");
 const settings        = require("./routes/settings");
 const localeRouter    = require('./routes/locale');
-const ogRouter        = require('./routes/og');  
 const agentVoucher = require("./routes/agentVoucher");
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 Route.use("/locale", localeRouter);
-Route.use("/og", ogRouter);      
 Route.use("/", publicRoutes);
 Route.use("/auth", auth);
 Route.use("/users", users);
