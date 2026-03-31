@@ -136,7 +136,7 @@ module.exports = {
       }
 
       if (user.verification_status === 'UNVERIFIED') {
-        return misc.response(res, 403, true, 'Akun Anda belum teraktivasi. Silakan cek email Anda untuk mengaktifkan akun.');
+        return misc.response(res, 403, true, 'Akun Anda belum teraktivasi. Silakan cek email Anda untuk mengaktifkan akun.', { is_unverified: true });
       }
 
       req.session.regenerate((regen_err) => {
@@ -394,6 +394,33 @@ module.exports = {
       await send_activation_email(targetEmail, user.name, activationToken, user.role.toLowerCase());
 
       return misc.response(res, 200, false, 'Email verifikasi telah dikirim ulang');
+    } catch (e) {
+      console.error(e);
+      return misc.response(res, 500, true, e.message || 'Internal server error');
+    }
+  },
+
+  resend_unverified: async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) return misc.response(res, 400, true, 'Email is required');
+
+      const user = await find_user_by_email(email);
+      if (!user) return misc.response(res, 404, true, 'Akun tidak ditemukan');
+
+      if (user.verification_status === 'VERIFIED') {
+        return misc.response(res, 400, true, 'Akun sudah terverifikasi. Silakan login.');
+      }
+
+      const targetEmail = user.pending_email || user.email;
+
+      await db.execute('DELETE FROM email_verifications WHERE email = ?', [targetEmail]);
+
+      const activationToken = crypto.randomBytes(32).toString('hex');
+      await save_activation_token(targetEmail, activationToken);
+      await send_activation_email(targetEmail, user.name || 'User', activationToken, user.role.toLowerCase());
+
+      return misc.response(res, 200, false, 'Email verifikasi telah dikirim ulang. Silakan cek kotak masuk Anda.');
     } catch (e) {
       console.error(e);
       return misc.response(res, 500, true, e.message || 'Internal server error');
