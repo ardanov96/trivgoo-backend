@@ -441,4 +441,98 @@ const getMyBookingDetail = async (req, res) => {
   }
 };
 
-module.exports = { getAllBookings, updateBookingStatus, getMyBookings, cancelMyBooking, rescheduleMyBooking, getMyBookingDetail };
+const getAdminBookingDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [rows] = await db.query(
+      `SELECT
+    b.id,
+    b.external_id as externalId,
+    b.product_id as productId,
+    b.product_name as productName,
+    b.user_name as userName,
+    b.quantity,
+    b.total_price as totalPrice,
+    b.date,
+    DATE_FORMAT(b.start_time, '%Y-%m-%dT%T') as startTime_str,
+    DATE_FORMAT(b.end_time, '%Y-%m-%dT%T') as endTime_str,
+    b.pickup_location as pickupLocation,
+    b.dropoff_location as dropoffLocation,
+    b.with_driver as withDriver,
+    b.vehicle_type as vehicleType,
+    b.duration,
+    b.pickup_fee as pickupFee,
+    b.dropoff_fee as dropoffFee,
+    b.admin_fee as adminFee,
+    b.add_ons_json as addOnsJson,
+    b.special_request as specialRequest,
+    b.status,
+    b.payment_url as paymentUrl,
+    b.payment_status as paymentStatus,
+    b.payment_gateway as paymentGateway,
+    b.original_date as originalDate,
+    b.reschedule_count as rescheduleCount,
+    b.created_at as createdAt,
+    b.paid_at as paidAt,
+    p.price as productBasePrice,
+    p.image_url as productImage,
+    p.location as productLocation,
+    u.name as agentName,
+    av.company_name as agentCompany,
+    u.email as agentEmail,
+    u2.email as customerEmail,
+    u2.phone_number as customerPhone
+  FROM bookings b
+  LEFT JOIN products p ON b.product_id = p.id
+  LEFT JOIN users u ON p.owner_id = u.id
+  LEFT JOIN agent_verifications av ON u.id = av.user_id
+  LEFT JOIN users u2 ON b.user_id = u2.id
+  WHERE b.id = ?
+  LIMIT 1`,
+      [id]
+    );
+
+    if (rows.length === 0) {
+      return response(res, 404, true, 'Booking not found', null);
+    }
+
+    const row = rows[0];
+    const formattedDate = row.date ? new Date(row.date).toISOString().split('T')[0] : null;
+
+    // Fetch latest payment transaction for accurate paymentUrl/expiry
+    const [txRows] = await db.query(
+      `SELECT payment_method, payment_channel, payment_url, expires_at 
+       FROM payment_transactions 
+       WHERE external_id = ? AND gateway = ?
+       ORDER BY id DESC LIMIT 1`,
+      [row.externalId, row.paymentGateway || 'xendit']
+    );
+    const tx = txRows.length > 0 ? txRows[0] : null;
+
+    const bookingDetail = {
+      ...row,
+      startTime: row.startTime_str,
+      endTime: row.endTime_str,
+      date: formattedDate,
+      totalPrice: parseFloat(row.totalPrice),
+      paymentMethod: tx?.payment_method || null,
+      paymentChannel: tx?.payment_channel || null,
+      paymentUrl: tx?.payment_url || row.paymentUrl,
+      paymentExpiredAt: tx?.expires_at || (row.createdAt
+        ? new Date(new Date(row.createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString()
+        : null),
+    };
+    
+    // Clean up temporary db strings
+    delete bookingDetail.startTime_str;
+    delete bookingDetail.endTime_str;
+
+    return response(res, 200, false, 'Booking detail fetched successfully', bookingDetail);
+  } catch (error) {
+    console.error('Error fetching admin booking detail:', error);
+    return response(res, 500, true, 'Failed to fetch booking detail', null);
+  }
+};
+
+module.exports = { getAllBookings, updateBookingStatus, getMyBookings, cancelMyBooking, rescheduleMyBooking, getMyBookingDetail, getAdminBookingDetail };

@@ -14,6 +14,7 @@ Route.post('/agents/:user_id/verification', admin.update_agent_verification);
 Route.get('/agents/products', admin.list_agent_products);
 Route.get('/agents/products/:product_id', admin.get_agent_product_detail);
 Route.get('/bookings', bookingController.getAllBookings);
+Route.get('/bookings/:id', bookingController.getAdminBookingDetail);
 Route.patch('/bookings/:id/status', bookingController.updateBookingStatus);
 Route.get('/dashboard/summary', admin.dashboard_summary);
 

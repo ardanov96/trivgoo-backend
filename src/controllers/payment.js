@@ -11,7 +11,9 @@ function toMySQLDatetime(val) {
   if (!val) return null;
   const d = new Date(val);
   if (isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 19).replace('T', ' ');
+  // Use local time components to avoid UTC conversion
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function getHeaderValue(headers = {}, name) {
