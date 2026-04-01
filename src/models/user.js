@@ -57,6 +57,21 @@ async function find_user_by_id(user_id) {
   return row;
 }
 
+async function generate_referral_code() {
+  while (true) {
+    const randomHex = crypto.randomBytes(3).toString('hex').toUpperCase();
+    const code = `TRV${randomHex}`;
+    const [rows] = await db.query('SELECT id FROM users WHERE referral_code = ?', [code]);
+    if (rows.length === 0) return code;
+  }
+}
+
+async function find_user_by_referral_code(code) {
+  if (!code) return null;
+  const [rows] = await db.query('SELECT id FROM users WHERE referral_code = ? LIMIT 1', [code]);
+  return rows[0] || null;
+}
+
 async function create_user({
   name,
   email,
@@ -64,11 +79,13 @@ async function create_user({
   role,
   specialization = null,
   phone_number = null,
+  referred_by_id = null,
 }) {
+  const referral_code = await generate_referral_code();
   const [result] = await db.query(
-    `INSERT INTO users (name, email, password_hash, role, specialization, phone_number)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [name, email, password_hash, role, specialization, phone_number]
+    `INSERT INTO users (name, email, password_hash, role, specialization, phone_number, referral_code, referred_by_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [name, email, password_hash, role, specialization, phone_number, referral_code, referred_by_id]
   );
   const [rows] = await db.query(
     `SELECT id, name, email, role, specialization, verification_status, is_active, created_at
@@ -189,6 +206,7 @@ async function mark_email_verified(email) {
 module.exports = {
   find_user_by_email,
   find_user_by_id,
+  find_user_by_referral_code,
   create_user,
   update_verification_status,
   update_user_profile,

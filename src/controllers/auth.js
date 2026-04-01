@@ -5,6 +5,7 @@ const {
   find_user_by_email,
   create_user,
   find_user_by_id,
+  find_user_by_referral_code,
   update_user,
   save_activation_token,
   verify_email_token,
@@ -43,6 +44,7 @@ function set_session_user(req, user) {
     role: user.role,
     specialization: user.specialization ?? null,
     name: user.name ?? null,
+    referral_code: user.referral_code ?? null,
   };
 }
 
@@ -57,7 +59,7 @@ module.exports = {
     try {
       console.log('\n[AUTH] === INCOMING REGISTER REQUEST ===');
       console.log('[AUTH] Payload:', req.body);
-      const { name, email, password, role, specialization, phone_number } = req.body || {};
+      const { name, email, password, role, specialization, phone_number, referral_code } = req.body || {};
 
       if (!name || !email || !password) {
         console.warn('[AUTH] Missing fields! Name/Email/Password');
@@ -74,6 +76,18 @@ module.exports = {
 
       const password_hash = await bcrypt.hash(password, 10);
 
+      let referred_by_id = null;
+      if (referral_code) {
+        try {
+          const referrer = await find_user_by_referral_code(referral_code.toUpperCase());
+          if (referrer && referrer.id) {
+            referred_by_id = referrer.id;
+          }
+        } catch (e) {
+          console.error('[AUTH] Failed to lookup referral_code:', e);
+        }
+      }
+
       const new_user = await create_user({
         name,
         email,
@@ -81,6 +95,7 @@ module.exports = {
         role: norm_role,
         specialization: norm_spec,
         phone_number,
+        referred_by_id,
       });
 
       try {
@@ -154,7 +169,7 @@ module.exports = {
           }
 
           return misc.response(res, 200, false, 'Login successfully', {
-            user: req.session.user,
+            user: to_safe_user(user),
           });
         });
       });
@@ -254,6 +269,7 @@ module.exports = {
         name: updatedUser.name,
         email: updatedUser.email,
         pending_email: updatedUser.pending_email,
+        referral_code: updatedUser.referral_code,
         // Optional: Jika ingin session menyimpan info foto
         profile_photo: updatedUser.profile_photo
       };
