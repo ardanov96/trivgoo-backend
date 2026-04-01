@@ -2,9 +2,11 @@ const express = require('express');
 const Route = express.Router();
 
 const admin = require('../controllers/admin');
+const adminCar = require('../controllers/adminCar');
 const bookingController = require('../controllers/booking');
 const paymentSettingRoutes = require('./payment_setting');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+
 
 // Route.use(requireAuth, requireAdmin);
 
@@ -22,5 +24,13 @@ Route.get('/dashboard/summary', admin.dashboard_summary);
 Route.post('/recovery/corporate-documents', admin.recover_corporate_documents);
 
 Route.use('/payment-settings', paymentSettingRoutes);
+
+// ── Vehicles (Cars) CRUD ─────────────────────────────────────────────────────
+Route.post('/upload/car-image',  adminCar.upload_car_image);
+Route.get('/cars',               adminCar.list_cars);
+Route.get('/cars/:id',           adminCar.get_car);
+Route.post('/cars',              adminCar.create_car);
+Route.put('/cars/:id',           adminCar.update_car);
+Route.delete('/cars/:id',        adminCar.delete_car);
 
 module.exports = Route;

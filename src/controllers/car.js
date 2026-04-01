@@ -1,18 +1,28 @@
 const misc = require('../helpers/response');
 const { list_all_cars, get_car_by_id } = require('../models/car');
 
-const BASE_URL = process.env.BASE_URL || process.env.API_URL_DEV || 'http://localhost'
+const BASE_URL = process.env.BASE_URL || process.env.API_URL_DEV || 'http://localhost:4001'
 
 function format_car(car) {
-  return {
-    ...car,
-    // Pastikan image tampil sebagai full URL jika belum
-    image: car.image
-      ? car.image.startsWith('http')
-        ? car.image
-        : `${BASE_URL}/${car.image.replace(/^public\//, '')}`
-      : null,
-  };
+  if (!car) return null;
+
+  let image = car.image || null;
+
+  if (image) {
+    if (image.startsWith('http')) {
+      // Sudah full URL — strip jadi path relatif agar resolveImageUrl() di frontend bisa handle
+      try {
+        image = new URL(image).pathname;
+      } catch {
+        // biarkan apa adanya
+      }
+    } else {
+      // Path relatif — pastikan diawali /
+      image = '/' + image.replace(/^\//, '').replace(/^public\//, '');
+    }
+  }
+
+  return { ...car, image };
 }
 
 async function list_cars(req, res) {
