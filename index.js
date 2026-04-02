@@ -128,8 +128,11 @@ app.use('/products/transport', express.static(path.join(__dirname, 'public/produ
 app.use('/car-rental',         express.static(path.join(__dirname, 'public/car-rental')));
 
 // SEO Sitemap mapping
-app.get('/sitemap.xml', require('./src/controllers/sitemap'));
-
+const sitemapController = require('./src/controllers/sitemap');
+app.get('/sitemap.xml', sitemapController.sitemapIndex);
+app.get('/sitemap-pages.xml', sitemapController.sitemapPages);
+app.get('/sitemap-products.xml', sitemapController.sitemapProducts);
+app.get('/sitemap-blog.xml', sitemapController.sitemapBlog);
 
 // API: no-cache header
 app.use('/api', (_, res, next) => {
