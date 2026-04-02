@@ -239,6 +239,44 @@ async function _onPaymentPaid(currentBooking, resultInvoiceNumber, notification)
   } catch (emailErr) {
     console.error('[EMAIL NOTIF] Failed notifications:', emailErr.message);
   }
+
+  // 4. TRIGGER #2 — Referral reward for first booking (1500 pts)
+  try {
+    if (currentBooking?.user_id) {
+      const userId = currentBooking.user_id;
+
+      // Check: is this the user's FIRST paid booking? (count must be exactly 1)
+      const paidCountResult = await execute(
+        `SELECT COUNT(*) as cnt FROM bookings WHERE user_id = ? AND payment_status = 'PAID'`,
+        [userId]
+      );
+      const paidRows = Array.isArray(paidCountResult[0]) ? paidCountResult[0] : paidCountResult;
+      const paidCount = paidRows?.[0]?.cnt ? Number(paidRows[0].cnt) : 0;
+
+      if (paidCount === 1) {
+        // Fetch referred_by_id from users table
+        const userResult = await execute(
+          `SELECT id, name, referred_by_id FROM users WHERE id = ? LIMIT 1`,
+          [userId]
+        );
+        const uRows = Array.isArray(userResult[0]) ? userResult[0] : userResult;
+        const referredUser = uRows?.[0];
+
+        if (referredUser?.referred_by_id && referredUser.referred_by_id !== referredUser.id) {
+          const { award_referral_points } = require('../models/loyalty');
+          await award_referral_points({
+            user_id: referredUser.referred_by_id,
+            points: 1500,
+            ref_type: 'earn_referral_booking',
+            ref_id: referredUser.id,
+            note: `Bonus booking pertama teman: ${referredUser.name || 'User'}`,
+          });
+        }
+      }
+    }
+  } catch (refErr) {
+    console.error('[REFERRAL BOOKING REWARD] Non-fatal error:', refErr.message);
+  }
 }
 
 /**

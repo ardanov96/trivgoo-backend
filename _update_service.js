@@ -1,1 +1,0 @@
-require('fs').writeFileSync('src/services/payment_service.js', require('fs').readFileSync('_new_service.js', 'utf8')); console.log('Done!');

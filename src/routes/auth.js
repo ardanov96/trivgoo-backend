@@ -21,4 +21,7 @@ Route.post("/reset-password", auth.reset_password);
 
 Route.get("/verify-email", auth.verify_email);
 
+Route.post("/referral/track_click", auth.track_referral_click);
+Route.get("/referral/stats", requireAuth, auth.get_referral_stats);
+
 module.exports = Route;

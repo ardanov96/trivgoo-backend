@@ -9,10 +9,13 @@ const {
   update_user,
   save_activation_token,
   verify_email_token,
-  mark_email_verified
+  mark_email_verified,
+  increment_referral_clicks,
+  get_referred_users
 } = require('../models/user');
 
 const { create_default_profile } = require('../models/profile');
+const { get_balance: get_point_balance } = require('../models/loyalty');
 
 const crypto = require('crypto');
 const { send_reset_password_email, send_activation_email } = require('../helpers/mailer');
@@ -440,6 +443,75 @@ module.exports = {
     } catch (e) {
       console.error(e);
       return misc.response(res, 500, true, e.message || 'Internal server error');
+    }
+  },
+
+  track_referral_click: async (req, res) => {
+    try {
+      const { code } = req.body;
+      if (!code) return misc.response(res, 400, true, 'Code is required');
+      
+      await increment_referral_clicks(code);
+      return misc.response(res, 200, false, 'Click tracked');
+    } catch (e) {
+      console.error('[REFERRAL TRACK] error:', e);
+      return misc.response(res, 500, true, 'Internal server error');
+    }
+  },
+
+  get_referral_stats: async (req, res) => {
+    try {
+      const user_id = req.session?.user?.id || req.user?.id;
+      if (!user_id) return misc.response(res, 401, true, 'Unauthorized');
+
+      const user = await find_user_by_id(user_id);
+      if (!user) return misc.response(res, 404, true, 'User not found');
+
+      const friends = await get_referred_users(user_id);
+      const balance = await get_point_balance(user_id);
+
+      // Enrich each friend with reward status
+      const enrichedFriends = [];
+      for (const friend of friends) {
+        // Check if verify reward was given for this friend
+        const [verifyRows] = await db.query(
+          `SELECT id FROM point_transactions WHERE user_id = ? AND ref_type = 'earn_referral_verify' AND ref_id = (SELECT id FROM users WHERE email = ? LIMIT 1) LIMIT 1`,
+          [user_id, friend.email]
+        );
+        const verifyRewarded = verifyRows.length > 0;
+
+        // Check if booking reward was given for this friend
+        const [bookingRows] = await db.query(
+          `SELECT id FROM point_transactions WHERE user_id = ? AND ref_type = 'earn_referral_booking' AND ref_id = (SELECT id FROM users WHERE email = ? LIMIT 1) LIMIT 1`,
+          [user_id, friend.email]
+        );
+        const bookingRewarded = bookingRows.length > 0;
+
+        // Check if friend has any paid booking
+        const [paidRows] = await db.query(
+          `SELECT id FROM bookings WHERE user_id = (SELECT id FROM users WHERE email = ? LIMIT 1) AND payment_status = 'PAID' LIMIT 1`,
+          [friend.email]
+        );
+        const hasBooking = paidRows.length > 0;
+
+        enrichedFriends.push({
+          ...friend,
+          verify_rewarded: verifyRewarded,
+          booking_rewarded: bookingRewarded,
+          has_booking: hasBooking,
+        });
+      }
+      
+      return misc.response(res, 200, false, 'Success', {
+        total_clicks: user.referral_clicks || 0,
+        total_registered: friends.length,
+        friends: enrichedFriends,
+        referral_code: user.referral_code,
+        point_balance: balance,
+      });
+    } catch (e) {
+      console.error('[REFERRAL STATS] error:', e);
+      return misc.response(res, 500, true, 'Internal server error');
     }
   }
 };
