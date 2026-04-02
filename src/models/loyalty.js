@@ -617,6 +617,87 @@ async function get_analytics_summary({ days = 30 } = {}) {
   };
 }
 
+// ─── Referral Reward Engine (Dual-Stage) ─────────────────────────────────────
+
+const REFERRAL_MONTHLY_LIMIT = 10; // Max referral booking rewards per month
+
+/**
+ * Award referral points to a sponsor with full DB transaction safety.
+ * Uses UNIQUE KEY (user_id, ref_type, ref_id) as ultimate anti-double-reward guard.
+ *
+ * @param {Object} opts
+ * @param {number} opts.user_id      - Sponsor user ID
+ * @param {number} opts.points       - Points to award
+ * @param {string} opts.ref_type     - 'earn_referral_verify' or 'earn_referral_booking'
+ * @param {number} opts.ref_id       - The referred user's ID
+ * @param {string} opts.note         - Description note
+ * @returns {Promise<boolean>}       - true if awarded, false if skipped (duplicate/limit)
+ */
+async function award_referral_points({ user_id, points, ref_type, ref_id, note }) {
+  try {
+    return await db.transaction(async (conn) => {
+      // 1. Anti-double reward check (belt)
+      const [existing] = await conn.execute(
+        `SELECT id FROM point_transactions WHERE user_id = ? AND ref_type = ? AND ref_id = ? LIMIT 1`,
+        [user_id, ref_type, ref_id]
+      );
+      if (existing.length > 0) {
+        console.log(`[REFERRAL REWARD] Skipped: duplicate reward user_id=${user_id} ref_type=${ref_type} ref_id=${ref_id}`);
+        return false;
+      }
+
+      // 2. Anti-abuse monthly limit (only for booking rewards)
+      if (ref_type === 'earn_referral_booking') {
+        const [countRows] = await conn.execute(
+          `SELECT COUNT(*) as cnt FROM point_transactions 
+           WHERE user_id = ? AND ref_type = 'earn_referral_booking' 
+           AND created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)`,
+          [user_id]
+        );
+        if (countRows[0] && countRows[0].cnt >= REFERRAL_MONTHLY_LIMIT) {
+          console.log(`[REFERRAL REWARD] Skipped: monthly limit reached for user_id=${user_id}`);
+          return false;
+        }
+      }
+
+      // 3. Upsert point_balances
+      await conn.execute(
+        `INSERT INTO point_balances (user_id, balance, lifetime_earned)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           balance = balance + VALUES(balance),
+           lifetime_earned = lifetime_earned + VALUES(lifetime_earned),
+           updated_at = NOW()`,
+        [user_id, points, points]
+      );
+
+      // 4. Get current balance for balance_after
+      const [[bal]] = await conn.execute(
+        `SELECT balance FROM point_balances WHERE user_id = ?`, [user_id]
+      );
+
+      // 5. Insert transaction record (UNIQUE KEY is the suspender / final guard)
+      await conn.execute(
+        `INSERT INTO point_transactions 
+           (user_id, type, points, balance_after, ref_type, ref_id, note, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [user_id, ref_type, points, bal?.balance ?? points, ref_type, ref_id, note]
+      );
+
+      console.log(`[REFERRAL REWARD] Awarded ${points} pts to user_id=${user_id} (${ref_type}, ref_id=${ref_id})`);
+      return true;
+    });
+  } catch (err) {
+    // ER_DUP_ENTRY means unique constraint caught a duplicate — this is expected, not an error
+    if (err.code === 'ER_DUP_ENTRY') {
+      console.log(`[REFERRAL REWARD] Skipped (unique constraint): user_id=${user_id} ref_type=${ref_type}`);
+      return false;
+    }
+    console.error('[REFERRAL REWARD] Error:', err);
+    throw err;
+  }
+}
+
 module.exports = {
   // Tiers
   get_all_tiers,
@@ -645,4 +726,6 @@ module.exports = {
   // Analytics
   get_analytics,
   get_analytics_summary,
+  // Referral Reward Engine
+  award_referral_points,
 };

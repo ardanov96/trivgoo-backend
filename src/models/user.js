@@ -183,14 +183,22 @@ async function verify_email_token(token) {
 }
 
 async function mark_email_verified(email) {
-  const [rows] = await db.query(`SELECT role FROM users WHERE email = ? OR pending_email = ?`, [email, email]);
-  const role = rows[0]?.role;
+  // 1. Fetch user info BEFORE update for idempotency check
+  const [rows] = await db.query(
+    `SELECT id, name, role, verification_status, referred_by_id FROM users WHERE email = ? OR pending_email = ?`,
+    [email, email]
+  );
+  const user = rows[0];
+  if (!user) return;
+
+  const wasUnverified = user.verification_status === 'UNVERIFIED';
 
   let newStatus = 'VERIFIED';
-  if (role === 'AGENT') {
+  if (user.role === 'AGENT') {
     newStatus = 'WAITING_DOCUMENT';
   }
 
+  // 2. Update verification status
   await db.query(`
     UPDATE users
     SET
@@ -201,12 +209,46 @@ async function mark_email_verified(email) {
     WHERE email = ? OR pending_email = ?
   `, [email, newStatus, email, email]);
   await db.query(`DELETE FROM email_verifications WHERE email = ?`, [email]);
+
+  // 3. TRIGGER #1 — Referral reward for email verification (500 pts)
+  //    Only if: was UNVERIFIED (idempotency), has sponsor, not self-referral
+  if (wasUnverified && user.referred_by_id && user.referred_by_id !== user.id) {
+    try {
+      const { award_referral_points } = require('./loyalty');
+      await award_referral_points({
+        user_id: user.referred_by_id,
+        points: 500,
+        ref_type: 'earn_referral_verify',
+        ref_id: user.id,
+        note: `Bonus verifikasi email teman: ${user.name || 'User'}`,
+      });
+    } catch (err) {
+      console.error('[REFERRAL VERIFY REWARD] Non-fatal error:', err.message);
+    }
+  }
+}
+
+async function increment_referral_clicks(referral_code) {
+  if (!referral_code) return;
+  await db.query(`UPDATE users SET referral_clicks = referral_clicks + 1 WHERE referral_code = ?`, [referral_code]);
+}
+
+async function get_referred_users(user_id) {
+  const uid = to_int(user_id);
+  if (!uid || uid <= 0) return [];
+  const [rows] = await db.query(
+    `SELECT name, email, verification_status, created_at FROM users WHERE referred_by_id = ? ORDER BY created_at DESC`,
+    [uid]
+  );
+  return rows;
 }
 
 module.exports = {
   find_user_by_email,
   find_user_by_id,
   find_user_by_referral_code,
+  increment_referral_clicks,
+  get_referred_users,
   create_user,
   update_verification_status,
   update_user_profile,
