@@ -2,7 +2,8 @@
 // require('dotenv').config();
 
 const env = process.env.NODE_ENV || 'development';
-require('dotenv').config({ path: `.env.${env}` });
+const dotenvFile = env === 'production' ? '.env' : `.env.${env}`;
+require('dotenv').config({ path: dotenvFile });
 
 /**
  * @type { Object.<string, import("knex").Knex.Config> }
