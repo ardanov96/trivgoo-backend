@@ -292,6 +292,7 @@ const createPayment = async (req, res) => {
 
     // Secure pricing is authoritative in the backend.
     let finalAmount = Number(amount);
+    let safePricingDetails = null;
     try {
       if (product_id) {
         const pricingEvaluation = await calculateFinalAmount({
@@ -310,6 +311,7 @@ const createPayment = async (req, res) => {
             pricingEvaluation.reason || 'Integrity check failed: secure backend pricing requires more context'
           );
         }
+        safePricingDetails = pricingEvaluation.details;
       }
     } catch (e) {
       console.error('[PRICING ERROR] Could not validate price:', e.message);
@@ -376,6 +378,10 @@ const createPayment = async (req, res) => {
         withDriver:       Boolean(req.body.withDriver),
         premiumInsurance: Boolean(req.body.premiumInsurance),
         childSeat:        Boolean(req.body.childSeat),
+        discountAmount:   safePricingDetails?.voucher_discount || 0,
+        agentDiscountAmount: safePricingDetails?.agent_voucher_discount || 0,
+        voucherCode:      safePricingDetails?.voucher_used || null,
+        agentVoucherCode: safePricingDetails?.agent_voucher_used || null,
       }),
     };
 
