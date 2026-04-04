@@ -290,6 +290,34 @@ const createPayment = async (req, res) => {
     // Destructure new payload attributes along with legacy
     const { id, amount, name, email, product_name, quantity, product_id, date, start_time, end_time, gateway } = req.body;
 
+    // STRICT VALIDATION
+    if (!product_id) return misc.response(res, 400, true, 'Invalid booking data: product_id is required');
+    
+    const cleanedDate = String(date || '').trim();
+    if (!cleanedDate || cleanedDate === '' || cleanedDate === '-') {
+      return misc.response(res, 400, true, 'Invalid booking data: date is required');
+    }
+    
+    const qty = Number(quantity);
+    if (isNaN(qty) || qty < 1) return misc.response(res, 400, true, 'Invalid booking data: quantity must be at least 1');
+
+    const dur = Number(req.body.duration);
+    const vehicleType = req.body.vehicle_type || '';
+    
+    // Validasi Durasi untuk Mobil, Motor, dan Hotel (Stay)
+    if (['car', 'motorcycle', 'stay'].includes(vehicleType)) {
+      if (isNaN(dur) || dur < 1) {
+        return misc.response(res, 400, true, `Invalid booking data: duration must be at least 1 for ${vehicleType}`);
+      }
+    }
+    
+    // Validasi Titik Jemput khusus Mobil/Motor
+    if (['car', 'motorcycle'].includes(vehicleType)) {
+      if (!req.body.pickup_location && !req.body.pickupAddress) {
+        return misc.response(res, 400, true, `Invalid booking data: pickup location is required for ${vehicleType}`);
+      }
+    }
+
     // Secure pricing is authoritative in the backend.
     let finalAmount = Number(amount);
     let safePricingDetails = null;
@@ -341,7 +369,7 @@ const createPayment = async (req, res) => {
           [order.product_id, order.end_time, order.start_time]
         );
       } else {
-        const orderDate = order.date || new Date().toISOString().split('T')[0];
+        const orderDate = order.date; // fallback removed
         bookingSumResult = await query(
           `SELECT SUM(quantity) as total_booked FROM bookings WHERE product_id = ? AND date = ? AND status != 'CANCELLED' AND payment_status = 'PAID'`,
           [order.product_id, orderDate]
@@ -361,7 +389,7 @@ const createPayment = async (req, res) => {
     }
 
     const transaction = await providerModule.createTransaction(order, config);
-    const finalDate = order.date || new Date().toISOString().split('T')[0];
+    const finalDate = order.date; // fallback removed
     const transIdentifier = transaction.gateway_invoice_id || transaction.request_id || null;
 
     // Extract booking metadata from req.body for persistence
