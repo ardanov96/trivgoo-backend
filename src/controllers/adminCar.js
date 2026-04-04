@@ -14,7 +14,6 @@ function format_car(car) {
 
   let image = car.image || null;
   if (image && !image.startsWith('http')) {
-    // Kirim sebagai path relatif, bukan full URL
     image = '/' + image.replace(/^public\//, '').replace(/^\//, '');
   }
 
@@ -32,7 +31,8 @@ function make_slug(name) {
 
 // ── Multer – image upload ─────────────────────────────────────────────────────
 
-const UPLOAD_DIR = path.join(__dirname, '../../public/uploads/cars');
+// ✅ DIUBAH: dari 'public/uploads/cars' → 'public/car-rental'
+const UPLOAD_DIR = path.join(__dirname, '../../public/car-rental');
 
 // Ensure directory exists
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -58,7 +58,6 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
 });
 
-// Export multer middleware so the route can use it
 const uploadMiddleware = upload.single('image');
 
 // ── POST /admin/upload/car-image ──────────────────────────────────────────────
@@ -72,8 +71,8 @@ async function upload_car_image(req, res) {
       return misc.response(res, 400, true, 'Tidak ada file yang diupload');
     }
 
-    // Build a relative path that format_car() can turn into a full URL
-    const relativePath = `uploads/cars/${req.file.filename}`;
+    // ✅ DIUBAH: dari 'uploads/cars/...' → '/car-rental/...'
+    const relativePath = `/car-rental/${req.file.filename}`;
     return misc.response(res, 200, false, 'Upload berhasil', { url: relativePath });
   });
 }
@@ -130,7 +129,6 @@ async function create_car(req, res) {
       return misc.response(res, 400, true, 'Field wajib: name, brand, model_year, transmission, fuel_type');
     }
 
-    // Generate slug and ensure uniqueness
     let slug = req.body.slug || make_slug(name);
     let suffix = 0;
     while (await carModel.slug_exists(slug)) {
@@ -173,11 +171,10 @@ async function update_car(req, res) {
       return misc.response(res, 400, true, 'Field wajib: name, brand, model_year, transmission, fuel_type');
     }
 
-    // Recalculate slug if name changed
     let slug = req.body.slug || make_slug(name);
     if (slug !== existing.slug && await carModel.slug_exists(slug, car_id)) {
       let suffix = 1;
-      while (await carModel.slug_exists(`${make_slug(name)}-${suffix}`, car_id)) suffix++;
+      while (await carModel.slug_Exists(`${make_slug(name)}-${suffix}`, car_id)) suffix++;
       slug = `${make_slug(name)}-${suffix}`;
     }
 
@@ -210,7 +207,6 @@ async function delete_car(req, res) {
     const existing = await carModel.get_car_by_id(car_id);
     if (!existing) return misc.response(res, 404, true, 'Kendaraan tidak ditemukan');
 
-    // Optionally remove the image file if it's local
     if (existing.image && !existing.image.startsWith('http')) {
       const filePath = path.join(__dirname, '../../public', existing.image);
       if (fs.existsSync(filePath)) {
