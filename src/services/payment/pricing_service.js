@@ -60,6 +60,7 @@ function normalizePricingContext(payload) {
 
   return {
     voucherCode: pickFirst(rawContext.voucherCode, rawContext.voucher_code, payload.voucher_code),
+    agentVoucherCode: pickFirst(rawContext.agentVoucherCode, rawContext.agent_voucher_code, payload.agent_voucher_code),
     vehicleType: pickFirst(rawContext.vehicleType, rawContext.vehicle_type, payload.vehicle_type),
     duration: toNumber(
       pickFirst(
@@ -198,7 +199,30 @@ async function calculateFinalAmount(payload) {
     }
   }
 
-  let backendFinalAmount = subtotal - voucherDiscount + ADMIN_FEE;
+  let agentVoucherDiscount = 0;
+  let activeAgentVoucher = null;
+  const agentVoucherCode = pricingContext.agentVoucherCode;
+
+  if (agentVoucherCode) {
+    const remainingSubtotal = Math.max(0, subtotal - voucherDiscount);
+    const vRes = await validate_voucher(agentVoucherCode, {
+      user_id,
+      amount: remainingSubtotal,
+    });
+    if (vRes && vRes.valid) {
+      agentVoucherDiscount = vRes.discount;
+      activeAgentVoucher = vRes.voucher;
+    } else {
+      return {
+        final_amount: Number(frontendAmount),
+        is_secure: false,
+        reason: vRes?.reason || 'Agent voucher validation failed.',
+      };
+    }
+  }
+
+  let totalDiscount = voucherDiscount + agentVoucherDiscount;
+  let backendFinalAmount = subtotal - totalDiscount + ADMIN_FEE;
   const diff = Math.abs(backendFinalAmount - toNumber(frontendAmount));
 
   if (isCar && !pricingContext.hasExplicitCarExtras && diff > ALLOWED_TOLERANCE) {
@@ -230,8 +254,11 @@ async function calculateFinalAmount(payload) {
       delivery_fee: deliveryTotal,
       subtotal,
       voucher_discount: voucherDiscount,
+      agent_voucher_discount: agentVoucherDiscount,
+      total_discount: totalDiscount,
       admin_fee: ADMIN_FEE,
-      voucher_used: activeVoucher ? activeVoucher.code : null
+      voucher_used: activeVoucher ? activeVoucher.code : null,
+      agent_voucher_used: activeAgentVoucher ? activeAgentVoucher.code : null
     }
   };
 }

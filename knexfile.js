@@ -8,7 +8,7 @@ require('dotenv').config({ path: dotenvFile });
 /**
  * @type { Object.<string, import("knex").Knex.Config> }
  */
-module.exports = {  
+module.exports = {
   development: {
     client: 'mysql2',
     connection: {
@@ -22,7 +22,7 @@ module.exports = {
       directory: './src/database/migrations',
     },
     seeds: {
-      directory: './seeders'  
+      directory: './seeders'
     }
   },
 
@@ -63,7 +63,7 @@ module.exports = {
       tableName: 'knex_migrations',
     },
     seeds: {
-      directory: './seeders/'  
+      directory: './seeders/'
     }
   },
 
