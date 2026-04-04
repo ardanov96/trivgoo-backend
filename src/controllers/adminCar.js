@@ -34,15 +34,18 @@ function make_slug(name) {
 // ✅ DIUBAH: dari 'public/uploads/cars' → 'public/car-rental'
 const UPLOAD_DIR = path.join(__dirname, '../../public/car-rental');
 
-// Ensure directory exists
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename:    (_req, file, cb) => {
+    // ✅ Pakai nama asli file (lowercase, spasi → dash)
     const ext      = path.extname(file.originalname).toLowerCase();
-    const unique   = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-    cb(null, `car-${unique}${ext}`);
+    const baseName = path.basename(file.originalname, path.extname(file.originalname))
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
+    cb(null, `${baseName}${ext}`);
   },
 });
 
@@ -71,7 +74,17 @@ async function upload_car_image(req, res) {
       return misc.response(res, 400, true, 'Tidak ada file yang diupload');
     }
 
-    // ✅ DIUBAH: dari 'uploads/cars/...' → '/car-rental/...'
+    // ✅ Hapus file lama jika dikirim via query/body
+    const oldImage = req.query.old_image || req.body.old_image;
+    if (oldImage && !oldImage.startsWith('http')) {
+      const oldPath = path.join(__dirname, '../../public', oldImage);
+      if (fs.existsSync(oldPath)) {
+        fs.unlink(oldPath, (unlinkErr) => {
+          if (unlinkErr) console.warn('Gagal hapus file lama:', unlinkErr.message);
+        });
+      }
+    }
+
     const relativePath = `/car-rental/${req.file.filename}`;
     return misc.response(res, 200, false, 'Upload berhasil', { url: relativePath });
   });
@@ -174,7 +187,7 @@ async function update_car(req, res) {
     let slug = req.body.slug || make_slug(name);
     if (slug !== existing.slug && await carModel.slug_exists(slug, car_id)) {
       let suffix = 1;
-      while (await carModel.slug_Exists(`${make_slug(name)}-${suffix}`, car_id)) suffix++;
+      while (await carModel.slug_exists(`${make_slug(name)}-${suffix}`, car_id)) suffix++;
       slug = `${make_slug(name)}-${suffix}`;
     }
 
