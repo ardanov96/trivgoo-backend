@@ -19,9 +19,11 @@ const chat            = require("./routes/chat");
 const settings        = require("./routes/settings");
 const localeRouter    = require('./routes/locale');
 const agentVoucher = require("./routes/agentVoucher");
+const appRoutes = require("./routes/app");
 
 // ── Routes ──────────────────────────────────────────────────────────────────
 Route.use("/locale", localeRouter);
+Route.use("/app", appRoutes);
 Route.use("/", publicRoutes);
 Route.use("/auth", auth);
 Route.use("/users", users);
