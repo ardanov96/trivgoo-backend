@@ -2,6 +2,7 @@
 const express = require("express");
 const Route = express.Router();
 
+const ai              = require("./routes/ai");
 const publicRoutes    = require("./routes/public");
 const auth            = require("./routes/auth");
 const users           = require("./routes/user");
@@ -24,6 +25,7 @@ const appRoutes = require("./routes/app");
 // ── Routes ──────────────────────────────────────────────────────────────────
 Route.use("/locale", localeRouter);
 Route.use("/app", appRoutes);
+Route.use("/ai", ai);
 Route.use("/", publicRoutes);
 Route.use("/auth", auth);
 Route.use("/users", users);
