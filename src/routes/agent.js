@@ -59,25 +59,147 @@ Route.get('/rating/reviews', requireAuth, reviewController.get_agent_reviews);
 Route.post('/rating/reviews/:id/reply', requireAuth, reviewController.reply_to_review);
 Route.post('/rating/reviews/:id/flag', requireAuth, reviewController.flag_review);
 
-Route.get('/ai-impressions', async (req, res) => {
+const db = require('../configs/db');
+
+Route.get('/ai-impressions', requireAuth, async (req, res) => {
   const userId = req.session?.user?.id;
   if (!userId) return res.status(401).json({ error: true, message: 'Unauthorized' });
-  const [rows] = await db.execute(`
-    SELECT
-      p.name                           AS product_name,
-      p.image_url                      AS image,
-      COUNT(ai.id)                     AS total_impressions,
-      COUNT(DISTINCT ai.user_id)       AS unique_users,
-      COUNT(DISTINCT DATE(ai.created_at)) AS active_days,
-      MAX(ai.created_at)               AS last_seen
-    FROM   ai_impressions ai
-    JOIN   products p ON p.id = ai.product_id
-    WHERE  p.user_id = ?
-    GROUP  BY ai.product_id
-    ORDER  BY total_impressions DESC
-    LIMIT  20
-  `, [userId]);
-  res.json({ error: false, data: rows });
+  try {
+    const [rows] = await db.execute(
+      `SELECT
+         p.name                              AS product_name,
+         p.image_url                         AS image,
+         COUNT(ai.id)                        AS total_impressions,
+         COUNT(DISTINCT ai.user_id)          AS unique_users,
+         COUNT(DISTINCT DATE(ai.created_at)) AS active_days,
+         MAX(ai.created_at)                  AS last_seen
+       FROM   ai_impressions ai
+       JOIN   products p ON p.id = ai.product_id
+       WHERE  p.owner_id = ?
+       GROUP  BY ai.product_id
+       ORDER  BY total_impressions DESC
+       LIMIT  20`,
+      [userId]
+    );
+    return res.json({ error: false, data: rows });
+  } catch (err) {
+    console.error('[Agent] ai-impressions error:', err.message);
+    return res.status(500).json({ error: true, message: 'Gagal mengambil data impressions.' });
+  }
+});
+
+Route.get('/knowledge-base', requireAuth, async (req, res) => {
+  const userId = req.session?.user?.id;
+  if (!userId) return res.status(401).json({ error: true, message: 'Unauthorized' });
+ 
+  try {
+    const [rows] = await db.execute(
+      `SELECT id, location, tip_type, title, content, valid_months, is_approved, is_active, created_at
+       FROM   knowledge_base
+       WHERE  agent_id = ?
+       ORDER  BY created_at DESC`,
+      [userId]
+    );
+    return res.json({ error: false, data: rows });
+  } catch (err) {
+    console.error('[KB] list error:', err.message);
+    return res.status(500).json({ error: true, message: 'Gagal mengambil data.' });
+  }
+});
+ 
+// ── POST tambah tip baru ──────────────────────────────────────────────────────
+Route.post('/knowledge-base', requireAuth, async (req, res) => {
+  const userId = req.session?.user?.id;
+  if (!userId) return res.status(401).json({ error: true, message: 'Unauthorized' });
+ 
+  const { location, tip_type, title, content, valid_months } = req.body;
+ 
+  if (!location?.trim() || !title?.trim() || !content?.trim()) {
+    return res.status(400).json({ error: true, message: 'location, title, dan content wajib diisi.' });
+  }
+ 
+  const VALID_TIP_TYPES = ['best_time','local_warning','hidden_gem','transport_tip','food_tip','culture_tip','practical_tip'];
+  if (!VALID_TIP_TYPES.includes(tip_type)) {
+    return res.status(400).json({ error: true, message: 'tip_type tidak valid.' });
+  }
+ 
+  try {
+    const [result] = await db.execute(
+      `INSERT INTO knowledge_base (agent_id, location, tip_type, title, content, valid_months, is_approved)
+       VALUES (?, ?, ?, ?, ?, ?, 0)`,
+      [
+        userId,
+        location.trim().toLowerCase(),
+        tip_type,
+        title.trim().substring(0, 200),
+        content.trim().substring(0, 2000),
+        valid_months?.trim() || null,
+      ]
+    );
+    return res.status(201).json({ error: false, message: 'Tips berhasil dikirim dan menunggu approval.', data: { id: result.insertId } });
+  } catch (err) {
+    console.error('[KB] create error:', err.message);
+    return res.status(500).json({ error: true, message: 'Gagal menyimpan tips.' });
+  }
+});
+ 
+// ── PUT update tip milik sendiri ──────────────────────────────────────────────
+Route.put('/knowledge-base/:id', requireAuth, async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { id }  = req.params;
+  const { title, content, valid_months, is_active } = req.body;
+ 
+  if (!userId) return res.status(401).json({ error: true, message: 'Unauthorized' });
+ 
+  try {
+    // Pastikan tip ini milik agent yang login
+    const [[tip]] = await db.execute(
+      'SELECT id FROM knowledge_base WHERE id = ? AND agent_id = ?',
+      [id, userId]
+    );
+    if (!tip) return res.status(404).json({ error: true, message: 'Tips tidak ditemukan.' });
+ 
+    await db.execute(
+      `UPDATE knowledge_base
+       SET title        = COALESCE(?, title),
+           content      = COALESCE(?, content),
+           valid_months = ?,
+           is_active    = COALESCE(?, is_active),
+           is_approved  = 0  -- reset approval setelah edit
+       WHERE id = ? AND agent_id = ?`,
+      [
+        title?.trim().substring(0, 200) || null,
+        content?.trim().substring(0, 2000) || null,
+        valid_months?.trim() || null,
+        is_active !== undefined ? Number(is_active) : null,
+        id, userId,
+      ]
+    );
+    return res.json({ error: false, message: 'Tips diupdate. Menunggu approval ulang.' });
+  } catch (err) {
+    console.error('[KB] update error:', err.message);
+    return res.status(500).json({ error: true, message: 'Gagal mengupdate tips.' });
+  }
+});
+ 
+// ── DELETE hapus tip milik sendiri ───────────────────────────────────────────
+Route.delete('/knowledge-base/:id', requireAuth, async (req, res) => {
+  const userId = req.session?.user?.id;
+  const { id }  = req.params;
+  if (!userId) return res.status(401).json({ error: true, message: 'Unauthorized' });
+ 
+  try {
+    const [result] = await db.execute(
+      'DELETE FROM knowledge_base WHERE id = ? AND agent_id = ?',
+      [id, userId]
+    );
+    if (result.affectedRows === 0)
+      return res.status(404).json({ error: true, message: 'Tips tidak ditemukan.' });
+    return res.json({ error: false, message: 'Tips dihapus.' });
+  } catch (err) {
+    console.error('[KB] delete error:', err.message);
+    return res.status(500).json({ error: true, message: 'Gagal menghapus tips.' });
+  }
 });
 
 module.exports = Route;
