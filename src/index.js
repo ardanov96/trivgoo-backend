@@ -19,7 +19,7 @@ const voucher         = require("./routes/voucher");
 const chat            = require("./routes/chat");
 const settings        = require("./routes/settings");
 const localeRouter    = require('./routes/locale');
-const agentVoucher = require("./routes/agentVoucher");
+const agentVoucher    = require("./routes/agent_voucher");
 const appRoutes = require("./routes/app");
 
 // ── Routes ──────────────────────────────────────────────────────────────────

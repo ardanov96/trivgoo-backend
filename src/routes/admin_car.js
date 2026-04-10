@@ -1,7 +1,7 @@
-// src/routes/adminCar.js
+// src/routes/admin_car.js
 const express    = require('express');
 const Route      = express.Router();
-const adminCar   = require('../controllers/adminCar');
+const adminCar   = require('../controllers/admin_car');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 // All routes require authentication + admin role

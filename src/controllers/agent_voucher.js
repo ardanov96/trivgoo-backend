@@ -1,4 +1,4 @@
-// api-trivgoo/src/controllers/agentVoucher.js
+// api-trivgoo/src/controllers/agent_voucher.js
 
 const misc = require('../helpers/response');
 const m = require('../models/agent_voucher');

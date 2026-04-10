@@ -2,7 +2,7 @@ const express = require('express');
 const Route = express.Router();
 
 const admin = require('../controllers/admin');
-const adminCar = require('../controllers/adminCar');
+const adminCar = require('../controllers/admin_car');
 const bookingController = require('../controllers/booking');
 const paymentSettingRoutes = require('./payment_setting');
 const { requireAuth, requireAdmin } = require('../middleware/auth');

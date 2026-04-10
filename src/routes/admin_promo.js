@@ -1,7 +1,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const promo   = require('../controllers/promo');
+const promo   = require('../controllers/promo_campaign');
 
 // ── /admin/promo/campaigns ────────────────────────────────────────────────────
 router.get('/promo/campaigns',       promo.list);

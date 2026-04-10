@@ -1,4 +1,4 @@
-// src/controllers/adminCar.js
+// src/controllers/admin_car.js
 const misc        = require('../helpers/response');
 const carModel    = require('../models/car');
 const path        = require('path');

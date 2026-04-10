@@ -1,9 +1,9 @@
-// api-trivgoo/src/routes/agentVoucher.js
+// api-trivgoo/src/routes/agent_voucher.js
 // Mount di: app.use('/api/v1/agent/vouchers', require('./routes/agentVoucher'))
 
 const express = require('express');
 const router  = express.Router();
-const ctrl    = require('../controllers/agentVoucher');
+const ctrl    = require('../controllers/agent_voucher');
 
 // ── PENTING: route statis SEBELUM /:id ────────────────────────────────────────
 router.get('/stats',  ctrl.get_stats);    // GET  /agent/vouchers/stats

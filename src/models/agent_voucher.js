@@ -1,4 +1,4 @@
-// api-trivgoo/src/models/agentVoucher.js
+// api-trivgoo/src/models/agent_voucher.js
 // Voucher yang dibuat oleh Agent (bukan Admin)
 // Disimpan di tabel yang SAMA (vouchers) dengan field created_by = agent user id
 // dan scope_owner = 'agent' untuk membedakan dengan voucher admin

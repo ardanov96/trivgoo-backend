@@ -59,4 +59,25 @@ Route.get('/rating/reviews', requireAuth, reviewController.get_agent_reviews);
 Route.post('/rating/reviews/:id/reply', requireAuth, reviewController.reply_to_review);
 Route.post('/rating/reviews/:id/flag', requireAuth, reviewController.flag_review);
 
+Route.get('/ai-impressions', async (req, res) => {
+  const userId = req.session?.user?.id;
+  if (!userId) return res.status(401).json({ error: true, message: 'Unauthorized' });
+  const [rows] = await db.execute(`
+    SELECT
+      p.name                           AS product_name,
+      p.image_url                      AS image,
+      COUNT(ai.id)                     AS total_impressions,
+      COUNT(DISTINCT ai.user_id)       AS unique_users,
+      COUNT(DISTINCT DATE(ai.created_at)) AS active_days,
+      MAX(ai.created_at)               AS last_seen
+    FROM   ai_impressions ai
+    JOIN   products p ON p.id = ai.product_id
+    WHERE  p.user_id = ?
+    GROUP  BY ai.product_id
+    ORDER  BY total_impressions DESC
+    LIMIT  20
+  `, [userId]);
+  res.json({ error: false, data: rows });
+});
+
 module.exports = Route;
