@@ -225,6 +225,10 @@ async function list_all_products() {
     features:  safeJsonParse(row.features, []),
     details:   safeJsonParse(row.details, {}),
     vouchers:  vouchersMap[row.id] ?? [],
+    is_flash_sale:      row.is_flash_sale      ? 1 : 0,
+    flash_sale_price:   row.flash_sale_price   ? Number(row.flash_sale_price)   : null,
+    flash_discount_pct: row.flash_discount_pct ? Number(row.flash_discount_pct) : null,
+    flash_ends_at:      row.flash_ends_at      ?? null,
     // ✅ FIX: sertakan owner dengan company_name
     owner: {
       name:         row.owner_name         || null,
@@ -394,6 +398,7 @@ async function list_products_by_owner(owner_id) {
        p.features, p.details, p.seo_title, p.seo_description, p.seo_slug,
        p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active,
        p.created_at, p.updated_at,
+       p.is_flash_sale, p.flash_sale_price, p.flash_discount_pct, p.flash_ends_at,
        u.id AS owner_user_id, u.name AS owner_name, u.email AS owner_email,
        u.specialization AS owner_specialization, up.avatar_url AS owner_avatar_url,
        av.company_name  AS owner_company_name,
@@ -446,6 +451,10 @@ async function list_products_by_owner(owner_id) {
       is_active:      !!row.is_active,
       created_at:     row.created_at,
       updated_at:     row.updated_at,
+      is_flash_sale:      row.is_flash_sale      ?? 0,
+      flash_sale_price:   row.flash_sale_price   ? Number(row.flash_sale_price)   : null,
+      flash_discount_pct: row.flash_discount_pct ? Number(row.flash_discount_pct) : null,
+      flash_ends_at:      row.flash_ends_at      ?? null,
       owner: {
         id:             row.owner_user_id,
         name:           row.owner_name,
@@ -473,6 +482,7 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
        p.features, p.details, p.seo_title, p.seo_description, p.seo_slug,
        p.seo_keyword, p.seo_canonical, p.seo_og_image, p.rating, p.is_active,
        p.created_at, p.updated_at,
+       p.is_flash_sale, p.flash_sale_price, p.flash_discount_pct, p.flash_ends_at,
        u.id AS owner_user_id, u.name AS owner_name, u.email AS owner_email,
        u.specialization AS owner_specialization, up.avatar_url AS owner_avatar_url,
        av.company_name  AS owner_company_name,
@@ -532,6 +542,10 @@ async function get_product_by_id_for_owner(product_id, owner_id) {
     is_active:      !!row.is_active,
     created_at:     row.created_at,
     updated_at:     row.updated_at,
+    is_flash_sale:      row.is_flash_sale      ?? 0,
+    flash_sale_price:   row.flash_sale_price   ? Number(row.flash_sale_price)   : null,
+    flash_discount_pct: row.flash_discount_pct ? Number(row.flash_discount_pct) : null,
+    flash_ends_at:      row.flash_ends_at      ?? null,
     owner: {
       id:             row.owner_user_id,
       name:           row.owner_name,

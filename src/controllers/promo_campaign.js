@@ -707,10 +707,37 @@ async function update_flash_sale_request(req, res) {
     }
 
     const newStatus = action === 'approve' ? 'approved' : 'rejected';
+
+    // 1. Update status di flash_sale_requests
     await db.execute(
       `UPDATE flash_sale_requests SET status = ?, updated_at = NOW() WHERE id = ?`,
       [newStatus, id]
     );
+
+    // 2. Update tabel products
+    if (action === 'approve') {
+      await db.execute(
+        `UPDATE products SET
+          is_flash_sale      = 1,
+          flash_sale_price   = ?,
+          flash_discount_pct = ?,
+          flash_ends_at      = COALESCE(?, DATE_ADD(NOW(), INTERVAL 24 HOUR)),
+          updated_at         = NOW()
+        WHERE id = ?`,
+        [row.sale_price, row.discount_pct, row.ends_at ?? null, row.product_id]
+      );
+    } else {
+      await db.execute(
+        `UPDATE products SET
+          is_flash_sale      = 0,
+          flash_sale_price   = NULL,
+          flash_discount_pct = NULL,
+          flash_ends_at      = NULL,
+          updated_at         = NOW()
+        WHERE id = ?`,
+        [row.product_id]
+      );
+    }
 
     return misc.response(res, 200, false, `Request ${newStatus}`, { id, status: newStatus });
   } catch (e) {
