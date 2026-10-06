@@ -56,8 +56,8 @@ app.use(cookieParser());
 // CORS Configuration
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow server-to-server requests (no origin) & known origins
-    if (!origin || allowedOrigins.has(origin)) return cb(null, true);
+    // Allow server-to-server requests (no origin), known origins, and any Vercel domain
+    if (!origin || allowedOrigins.has(origin) || origin.endsWith('.vercel.app')) return cb(null, true);
     console.warn(`[CORS BLOCKED] Origin: ${origin}`);
     return cb(new Error(`CORS blocked: ${origin}`));
   },
