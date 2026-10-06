@@ -2,8 +2,11 @@
  * Optimized Express bootstrap - Fixed Lifecycle for Production/VPS
  * Fixed: MySQL session store, cookie config per-env, CORS hardened, dotenv per-env
  */
-const dotenvFile = process.env.NODE_ENV === 'production' ? '.env' : '.env.development';
-require('dotenv').config({ path: dotenvFile });
+let dotenvFile = 'vercel-env';
+if (!process.env.VERCEL) {
+  dotenvFile = process.env.NODE_ENV === 'production' ? '.env' : '.env.development';
+  require('dotenv').config({ path: dotenvFile });
+}
 
 const express = require('express');
 const helmet = require('helmet');
@@ -140,7 +143,16 @@ app.use('/api', (_, res, next) => {
   next();
 });
 
-console.log("Checking routerNav...");
+// Root Health & Welcome Endpoints
+app.get(['/', '/api'], (req, res) => {
+  res.json({
+    status: 200,
+    success: true,
+    message: 'Trivgoo API is running successfully',
+    version: '1.0.0',
+    environment: NODE_ENV
+  });
+});
 
 // Mount Main Router
 app.use('/api/v1', routerNav);

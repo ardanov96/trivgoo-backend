@@ -1,7 +1,7 @@
 // src/controllers/agent_profile.js
 // Handles agent profile settings, password change, and bank change requests
 
-const bcrypt    = require('bcrypt');
+const bcrypt    = require('bcryptjs');
 const path      = require('path');
 const fs        = require('fs');
 const misc      = require('../helpers/response');

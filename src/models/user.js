@@ -1,6 +1,6 @@
 // src/models/user.js
 const db     = require("../configs/db");
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
 function to_int(v) {

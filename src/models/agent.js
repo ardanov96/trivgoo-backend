@@ -1,5 +1,5 @@
 const db = require('../configs/db');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 const AGENT_TYPES = new Set(['INDIVIDUAL', 'CORPORATE']);
 const SPECIALIZATIONS = new Set(['TOUR', 'STAY', 'TRANSPORT']);

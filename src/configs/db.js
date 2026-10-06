@@ -1,6 +1,8 @@
-const env = process.env.NODE_ENV || 'development';
-const dotenvFile = env === 'production' ? '.env' : `.env.${env}`;
-require('dotenv').config({ path: dotenvFile });
+if (!process.env.VERCEL) {
+  const env = process.env.NODE_ENV || 'development';
+  const dotenvFile = env === 'production' ? '.env' : `.env.${env}`;
+  require('dotenv').config({ path: dotenvFile });
+}
 const mysql = require('mysql2/promise');
 
 const sslConfig = process.env.DB_SSL === 'true' ? {

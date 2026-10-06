@@ -1,7 +1,6 @@
-// src/services/payment/gateways/doku.js
 const axios = require('axios');
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
+const uuidv4 = () => crypto.randomUUID();
 
 function getTimestampUTC() {
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
