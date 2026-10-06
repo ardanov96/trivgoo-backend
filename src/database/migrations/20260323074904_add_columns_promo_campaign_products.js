@@ -6,21 +6,20 @@
  * @param { import("knex").Knex } knex
  * @returns { Promise<void> }
  */
-exports.up = function (knex) {
-  return knex.schema.alterTable('promo_campaign_products', (table) => {
-    // Persentase diskon yang diajukan agent saat join campaign
+exports.up = async function (knex) {
+  await knex.schema.alterTable('promo_campaign_products', (table) => {
     table.decimal('discount_pct', 5, 2).nullable().after('scope_id');
-
-    // Harga jual setelah diskon (dihitung saat join, disimpan agar tidak perlu recalculate)
+  });
+  await knex.schema.alterTable('promo_campaign_products', (table) => {
     table.decimal('sale_price', 15, 2).nullable().after('discount_pct');
-
-    // Status keikutsertaan produk di campaign: active | inactive
+  });
+  await knex.schema.alterTable('promo_campaign_products', (table) => {
     table.enu('status', ['active', 'inactive'])
       .notNullable()
       .defaultTo('active')
       .after('sale_price');
-
-    // Timestamp kapan produk didaftarkan ke campaign
+  });
+  await knex.schema.alterTable('promo_campaign_products', (table) => {
     table.timestamp('joined_at')
       .notNullable()
       .defaultTo(knex.fn.now())

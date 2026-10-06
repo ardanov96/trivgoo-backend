@@ -13,7 +13,7 @@ exports.up = async function(knex) {
   const hasRefById = await knex.schema.hasColumn('users', 'referred_by_id');
   if (!hasRefById) {
     await knex.schema.alterTable('users', function(table) {
-      table.integer('referred_by_id').unsigned().nullable();
+      table.bigInteger('referred_by_id').unsigned().nullable();
       table.foreign('referred_by_id').references('users.id').onDelete('SET NULL');
     });
   }

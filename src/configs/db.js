@@ -1,6 +1,12 @@
-// configs/db.js
-require('dotenv').config();
+const env = process.env.NODE_ENV || 'development';
+const dotenvFile = env === 'production' ? '.env' : `.env.${env}`;
+require('dotenv').config({ path: dotenvFile });
 const mysql = require('mysql2/promise');
+
+const sslConfig = process.env.DB_SSL === 'true' ? {
+  minVersion: 'TLSv1.2',
+  rejectUnauthorized: true,
+} : undefined;
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -8,6 +14,7 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
   port: Number(process.env.DB_PORT || 3306),
+  ssl: sslConfig,
 
   waitForConnections: true,
   connectionLimit: Number(process.env.DB_POOL_LIMIT || 10),

@@ -5,6 +5,11 @@ const env = process.env.NODE_ENV || 'development';
 const dotenvFile = env === 'production' ? '.env' : `.env.${env}`;
 require('dotenv').config({ path: dotenvFile });
 
+const sslConfig = process.env.DB_SSL === 'true' ? {
+  minVersion: 'TLSv1.2',
+  rejectUnauthorized: true,
+} : undefined;
+
 /**
  * @type { Object.<string, import("knex").Knex.Config> }
  */
@@ -17,6 +22,7 @@ module.exports = {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
+      ssl: sslConfig,
     },
     migrations: {
       directory: './src/database/migrations',
@@ -34,6 +40,7 @@ module.exports = {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
+      ssl: sslConfig,
     },
     pool: {
       min: 2,
@@ -53,6 +60,7 @@ module.exports = {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
+      ssl: sslConfig,
     },
     pool: {
       min: 2,
