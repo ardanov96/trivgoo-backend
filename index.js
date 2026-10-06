@@ -191,4 +191,8 @@ async function start() {
   });
 }
 
-start().catch(e => console.error("[FATAL]", e));
+module.exports = app;
+
+if (!process.env.VERCEL) {
+  start().catch(e => console.error("[FATAL]", e));
+}
